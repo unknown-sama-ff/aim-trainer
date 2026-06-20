@@ -1,0 +1,2627 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Aim Trainer — FPS 瞄准训练</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{width:100%;height:100%;overflow:hidden;background:#0a0a0f;color:#e0e0e0;font-family:Consolas,Monaco,'Courier New',monospace;user-select:none;-webkit-user-select:none}
+#gameCanvas{display:block;width:100vw;height:100vh;cursor:none}
+#uiOverlay{position:fixed;inset:0;pointer-events:none;z-index:10}
+#uiOverlay.interactive{pointer-events:auto}
+.panel{position:absolute;background:rgba(10,10,15,.92);border:1px solid rgba(0,255,136,.25);border-radius:8px;padding:24px;backdrop-filter:blur(8px);box-shadow:0 8px 32px rgba(0,0,0,.6)}
+.panel h1{font-size:1.6rem;color:#00ff88;margin-bottom:4px;letter-spacing:2px}
+.panel h2{font-size:.85rem;color:#888;margin-bottom:20px;font-weight:normal}
+.menu-center{top:50%;left:50%;transform:translate(-50%,-50%);min-width:420px;max-width:90vw;max-height:90vh;overflow-y:auto}
+.mode-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px}
+.mode-btn,.action-btn,.back-btn{padding:14px 16px;background:rgba(0,255,136,.08);border:1px solid rgba(0,255,136,.3);border-radius:6px;color:#e0e0e0;cursor:pointer;font-family:inherit;font-size:.85rem;transition:all .15s;text-align:left}
+.mode-btn:hover,.action-btn:hover,.back-btn:hover{background:rgba(0,255,136,.18);border-color:#00ff88}
+.mode-btn.selected{background:rgba(0,255,136,.22);border-color:#00ff88;color:#00ff88}
+.mode-btn .desc{display:block;font-size:.7rem;color:#666;margin-top:4px}
+.settings-group{margin-bottom:14px}
+.settings-group label{display:block;font-size:.75rem;color:#888;margin-bottom:4px}
+.settings-group input[type=range]{width:100%;accent-color:#00ff88}
+.settings-group select,.settings-group input[type=color],.settings-group input[type=number]{width:100%;padding:6px 8px;background:#151520;border:1px solid #333;border-radius:4px;color:#e0e0e0;font-family:inherit;font-size:.8rem}
+.settings-row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.checkbox-row{display:flex;align-items:center;gap:8px;font-size:.8rem;color:#aaa;margin:6px 0}
+.checkbox-row input{accent-color:#00ff88}
+.hud{position:fixed;top:16px;left:16px;pointer-events:none;font-size:.8rem;line-height:1.7;text-shadow:0 1px 3px rgba(0,0,0,.8)}
+.hud.hidden{display:none}
+.hud .val{color:#00ff88}
+.hud .warn{color:#ff4444}
+.hud-right{left:auto;right:16px;text-align:right}
+.countdown-overlay{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;font-size:8rem;color:#00ff88;text-shadow:0 0 40px rgba(0,255,136,.5);pointer-events:none;z-index:20}
+.pause-overlay{position:fixed;inset:0;background:rgba(0,0,0,.7);display:flex;align-items:center;justify-content:center;z-index:15;pointer-events:auto}
+.pause-panel{text-align:center}
+.pause-panel h2{font-size:2rem;color:#00ff88;margin-bottom:16px}
+.pause-panel p{color:#888;font-size:.85rem;margin-bottom:8px}
+.results-panel{min-width:480px;max-width:560px}
+.stat-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:16px 0}
+.stat-item{background:rgba(255,255,255,.04);padding:10px;border-radius:4px}
+.stat-item .label{font-size:.7rem;color:#666}
+.stat-item .value{font-size:1.1rem;color:#00ff88;margin-top:2px}
+.grade{font-size:3rem;font-weight:bold;text-align:center;margin:8px 0}
+.grade-S{color:#ffd700}.grade-A{color:#00ff88}.grade-B{color:#44aaff}.grade-C{color:#ffaa44}.grade-D{color:#ff4444}
+#trendChart{width:100%;height:120px;margin-top:12px;background:rgba(0,0,0,.3);border-radius:4px}
+.btn-row{display:flex;gap:10px;margin-top:16px}
+.btn-row button{flex:1;padding:12px}
+.tabs{display:flex;gap:4px;margin-bottom:16px}
+.tab-btn{flex:1;padding:8px;background:rgba(255,255,255,.05);border:1px solid #333;border-radius:4px;color:#888;cursor:pointer;font-family:inherit;font-size:.75rem}
+.tab-btn.active{background:rgba(0,255,136,.15);border-color:#00ff88;color:#00ff88}
+.tab-content{display:none}.tab-content.active{display:block}
+.lang-toggle{position:fixed;top:12px;right:12px;z-index:30;padding:6px 12px;background:rgba(10,10,15,.8);border:1px solid #333;border-radius:4px;color:#888;cursor:pointer;font-family:inherit;font-size:.75rem;pointer-events:auto}
+.lang-toggle:hover{border-color:#00ff88;color:#00ff88}
+.shake{animation:shake .15s ease}
+@keyframes shake{0%,100%{transform:translate(0)}25%{transform:translate(-3px,2px)}75%{transform:translate(3px,-2px)}}
+</style>
+</head>
+<body>
+<canvas id="gameCanvas"></canvas>
+<button class="lang-toggle" id="langToggle">EN</button>
+<div id="uiOverlay" class="interactive"></div>
+<script>
+'use strict';
+
+/* ==========================================================================
+   Aim Trainer — 单文件 FPS 瞄准训练系统
+   模块: Engine | Renderer | Input | Audio | GameModes | Storage | UI | Stats
+   ========================================================================== */
+
+// ─── 常量 ───────────────────────────────────────────────────────────────────
+const GAME_STATE = { MENU: 'MENU', COUNTDOWN: 'COUNTDOWN', PLAYING: 'PLAYING', PAUSED: 'PAUSED', RESULTS: 'RESULTS' };
+const STORAGE_KEY = 'aimTrainer_v1';
+const MAX_HISTORY = 50;
+const TARGET_COLOR = '#00ff88';
+const HIT_COLOR = '#ffffff';
+const MISS_FLASH = '#ff4444';
+
+// ─── 全局状态 ───────────────────────────────────────────────────────────────
+const State = {
+  phase: GAME_STATE.MENU,
+  mode: 'gridShot',
+  lang: 'zh',
+  settings: null,
+  modeParams: null,
+  session: null,
+  countdownValue: 3,
+  countdownTimer: 0,
+  hudVisible: true,
+  menuTab: 'modes',
+  selectedModeIndex: 0,
+  shakeTimer: 0,
+  lastFrameTime: 0,
+  accumulator: 0,
+  fixedDt: 1 / 144,
+  tabHiddenAt: 0,
+};
+
+// ─── Engine: 游戏循环与时间管理 ─────────────────────────────────────────────
+const Engine = {
+  /** @type {number} */
+  fps: 0,
+  /** @type {number} */
+  frameCount: 0,
+  /** @type {number} */
+  fpsTimer: 0,
+
+  /**
+   * 初始化引擎，绑定 rAF 循环
+   * @param {HTMLCanvasElement} canvas
+   */
+  init(canvas) {
+    Renderer.init(canvas);
+    Input.init(canvas);
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) State.tabHiddenAt = performance.now();
+      else if (State.tabHiddenAt) {
+        const gap = performance.now() - State.tabHiddenAt;
+        State.accumulator = Math.min(State.accumulator + gap / 1000, 0.2);
+        State.tabHiddenAt = 0;
+      }
+    });
+    State.lastFrameTime = performance.now();
+    requestAnimationFrame(Engine.loop);
+  },
+
+  /**
+   * 主循环 — 固定时间步长更新 + 可变渲染
+   * @param {number} now
+   */
+  loop(now) {
+    let dt = (now - State.lastFrameTime) / 1000;
+    State.lastFrameTime = now;
+    if (dt > 0.1) dt = 0.1;
+
+    Engine.frameCount++;
+    Engine.fpsTimer += dt;
+    if (Engine.fpsTimer >= 1) {
+      Engine.fps = Engine.frameCount;
+      Engine.frameCount = 0;
+      Engine.fpsTimer = 0;
+    }
+
+    State.accumulator += dt;
+    while (State.accumulator >= State.fixedDt) {
+      Engine.update(State.fixedDt);
+      State.accumulator -= State.fixedDt;
+    }
+
+    if (State.shakeTimer > 0) State.shakeTimer -= dt;
+
+    Renderer.clear();
+    Engine.render();
+    Input.poll();
+    requestAnimationFrame(Engine.loop);
+  },
+
+  /**
+   * 逻辑更新（固定步长）
+   * @param {number} dt - 秒
+   */
+  update(dt) {
+    switch (State.phase) {
+      case GAME_STATE.COUNTDOWN:
+        State.countdownTimer -= dt;
+        if (State.countdownTimer <= 0) {
+          State.countdownValue--;
+          if (State.countdownValue <= 0) {
+            State.phase = GAME_STATE.PLAYING;
+            Input.rawX = Renderer.width / 2;
+            Input.rawY = Renderer.height / 2;
+            Input.crosshairX = Input.rawX;
+            Input.crosshairY = Input.rawY;
+            Input.lockPointer();
+            const mode = GameModes[State.mode];
+            if (mode && mode.onStart) mode.onStart();
+          } else {
+            State.countdownTimer = 1;
+            Audio.playTick();
+          }
+        }
+        break;
+      case GAME_STATE.PLAYING: {
+        const mode = GameModes[State.mode];
+        if (mode && mode.update) mode.update(dt);
+        break;
+      }
+    }
+  },
+
+  /** 渲染当前阶段 */
+  render() {
+    if (State.phase === GAME_STATE.PLAYING || State.phase === GAME_STATE.PAUSED) {
+      const mode = GameModes[State.mode];
+      if (mode && mode.render) mode.render();
+      Renderer.drawCrosshair(Input.crosshairX, Input.crosshairY);
+      if (State.hudVisible) UI.renderHUD();
+    }
+    if (State.phase === GAME_STATE.COUNTDOWN) {
+      UI.renderCountdown();
+    }
+  },
+
+  /**
+   * 开始训练流程
+   * @param {string} modeId
+   */
+  startTraining(modeId) {
+    State.mode = modeId;
+    // 清理其他模式残留数据，避免串模式
+    Object.keys(GameModes).forEach((key) => {
+      if (GameModes[key].data !== undefined) GameModes[key].data = null;
+    });
+    State.modeParams = { ...Storage.getDefaultModeParams(modeId), ...UI.collectModeParams(modeId) };
+    Storage.saveMode360Pref(modeId, !!State.modeParams.enable360);
+    Input.setCameraMode(!!State.modeParams.enable360);
+    State.session = Stats.createSession(modeId, State.modeParams);
+    State.phase = GAME_STATE.COUNTDOWN;
+    State.countdownValue = 3;
+    State.countdownTimer = 0.5;
+    UI.hideMenu();
+    Input.lockPointer();
+    Audio.playTick();
+  },
+
+  /** 结束训练并进入结算 */
+  endTraining() {
+    Input.unlockPointer();
+    Stats.finalizeSession(State.session);
+    Storage.saveSession(State.session);
+    Storage.updateHighScore(State.mode, State.session.score);
+    State.phase = GAME_STATE.RESULTS;
+    UI.showResults();
+  },
+
+  /** 返回主菜单 */
+  returnToMenu() {
+    Input.unlockPointer();
+    Input.setCameraMode(false);
+    State.phase = GAME_STATE.MENU;
+    State.session = null;
+    UI.showMenu();
+  },
+
+  /** 快速重新开始 */
+  restart() {
+    if (State.mode) Engine.startTraining(State.mode);
+  },
+};
+
+// ─── Renderer: Canvas 绘制与 DPI ────────────────────────────────────────────
+const Renderer = {
+  /** @type {CanvasRenderingContext2D} */
+  ctx: null,
+  width: 0,
+  height: 0,
+  dpr: 1,
+
+  /**
+   * 初始化渲染器
+   * @param {HTMLCanvasElement} canvas
+   */
+  init(canvas) {
+    Renderer.canvas = canvas;
+    Renderer.ctx = canvas.getContext('2d', { alpha: false });
+    window.addEventListener('resize', Renderer.resize);
+    Renderer.resize();
+  },
+
+  /** 响应窗口尺寸与 DPI 变化 */
+  resize() {
+    const canvas = Renderer.canvas;
+    Renderer.dpr = window.devicePixelRatio || 1;
+    Renderer.width = window.innerWidth;
+    Renderer.height = window.innerHeight;
+    canvas.width = Renderer.width * Renderer.dpr;
+    canvas.height = Renderer.height * Renderer.dpr;
+    canvas.style.width = Renderer.width + 'px';
+    canvas.style.height = Renderer.height + 'px';
+    Renderer.ctx.setTransform(Renderer.dpr, 0, 0, Renderer.dpr, 0, 0);
+  },
+
+  /** 清空画布 */
+  clear() {
+    const { ctx, width, height } = Renderer;
+    ctx.fillStyle = '#0a0a0f';
+    ctx.fillRect(0, 0, width, height);
+  },
+
+  /**
+   * 绘制圆形目标（含弹出/淡出动画）
+   * @param {number} x
+   * @param {number} y
+   * @param {number} radius
+   * @param {number} [alpha=1]
+   * @param {number} [scale=1]
+   * @param {string} [color]
+   */
+  drawTarget(x, y, radius, alpha = 1, scale = 1, color = TARGET_COLOR) {
+    const { ctx } = Renderer;
+    const r = radius * scale;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fillStyle = color;
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.restore();
+  },
+
+  /**
+   * 绘制击中粒子效果
+   * @param {Array<{x:number,y:number,vx:number,vy:number,life:number}>} particles
+   */
+  drawParticles(particles) {
+    const { ctx } = Renderer;
+    for (const p of particles) {
+      ctx.save();
+      ctx.globalAlpha = p.life;
+      ctx.fillStyle = HIT_COLOR;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 3 * p.life, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+  },
+
+  /**
+   * 绘制准星 — 支持十字/点/圆环，带反色描边确保可见性
+   * @param {number} x
+   * @param {number} y
+   */
+  drawCrosshair(x, y) {
+    const s = State.settings.crosshair;
+    const { ctx } = Renderer;
+    const spread = s.shootSpread && Input.shootAnim > 0 ? Input.shootAnim * 4 : 0;
+    const len = s.length + spread;
+    const gap = s.gap + spread * 0.5;
+
+    ctx.save();
+    ctx.globalAlpha = s.opacity;
+    ctx.strokeStyle = s.color;
+    ctx.fillStyle = s.color;
+    ctx.lineWidth = s.thickness;
+    ctx.lineCap = 'round';
+
+    // 反色描边：在深色背景上增强对比
+    const outline = (fn) => {
+      ctx.save();
+      ctx.strokeStyle = 'rgba(0,0,0,0.6)';
+      ctx.lineWidth = s.thickness + 2;
+      fn();
+      ctx.restore();
+      fn();
+    };
+
+    if (s.type === 'dot') {
+      outline(() => { ctx.beginPath(); ctx.arc(x, y, s.length, 0, Math.PI * 2); ctx.fill(); });
+    } else if (s.type === 'circle') {
+      outline(() => { ctx.beginPath(); ctx.arc(x, y, s.length, 0, Math.PI * 2); ctx.stroke(); });
+    } else {
+      // cross
+      const drawLines = () => {
+        ctx.beginPath();
+        ctx.moveTo(x - len - gap, y); ctx.lineTo(x - gap, y);
+        ctx.moveTo(x + gap, y); ctx.lineTo(x + len + gap, y);
+        ctx.moveTo(x, y - len - gap); ctx.lineTo(x, y - gap);
+        ctx.moveTo(x, y + gap); ctx.lineTo(x, y + len + gap);
+        ctx.stroke();
+      };
+      outline(drawLines);
+    }
+    ctx.restore();
+  },
+
+  /**
+   * 屏幕震动偏移
+   * @returns {{x:number,y:number}}
+   */
+  getShakeOffset() {
+    if (State.shakeTimer <= 0) return { x: 0, y: 0 };
+    const m = State.shakeTimer * 30;
+    return { x: (Math.random() - 0.5) * m, y: (Math.random() - 0.5) * m };
+  },
+};
+
+// ─── World3D: 360° 视角投影与全景背景 ───────────────────────────────────────
+const World3D = {
+  FOV_H: 2.35,
+  FOV_V: 1.45,
+  /** @type {Array<{yaw:number,pitch:number,size:number,brightness:number}>} */
+  stars: [],
+
+  /** 初始化星空背景点 */
+  initStars() {
+    if (World3D.stars.length) return;
+    for (let i = 0; i < 160; i++) {
+      World3D.stars.push({
+        yaw: (Math.random() - 0.5) * Math.PI * 2,
+        pitch: (Math.random() - 0.5) * 1.6,
+        size: Math.random() > 0.85 ? 2 : 1,
+        brightness: 0.15 + Math.random() * 0.55,
+      });
+    }
+  },
+
+  /**
+   * 角度归一化到 [-π, π]
+   * @param {number} a
+   * @returns {number}
+   */
+  normalizeAngle(a) {
+    while (a > Math.PI) a -= Math.PI * 2;
+    while (a < -Math.PI) a += Math.PI * 2;
+    return a;
+  },
+
+  /**
+   * 两目标之间的角距离
+   * @param {number} y1
+   * @param {number} p1
+   * @param {number} y2
+   * @param {number} p2
+   */
+  angularDistance(y1, p1, y2, p2) {
+    return Math.hypot(World3D.normalizeAngle(y1 - y2), p1 - p2);
+  },
+
+  /**
+   * 将球面坐标投影到屏幕（背景与目标共用同一公式）
+   * 约定：pitch>0 为天空（屏幕上方向），cameraPitch>0 为抬头
+   * @param {number} tYaw - 目标水平角
+   * @param {number} tPitch - 目标垂直角
+   * @param {number} cYaw - 相机水平角
+   * @param {number} cPitch - 相机垂直角
+   * @returns {{x:number,y:number,visible:boolean,relYaw:number,relPitch:number}}
+   */
+  project(tYaw, tPitch, cYaw, cPitch) {
+    const w = Renderer.width;
+    const h = Renderer.height;
+    const relYaw = World3D.normalizeAngle(tYaw - cYaw);
+    const relPitch = tPitch - cPitch;
+    const x = w / 2 + (relYaw / World3D.FOV_H) * w;
+    const y = h / 2 - (relPitch / World3D.FOV_V) * h;
+    const visible = Math.abs(relYaw) < World3D.FOV_H * 0.55 && Math.abs(relPitch) < World3D.FOV_V * 0.55;
+    return { x, y, visible, relYaw, relPitch };
+  },
+
+  /**
+   * 绘制 360° 训练场景背景（全部元素走 project，与目标小球同一套 Y 轴）
+   * @param {number} camYaw
+   * @param {number} camPitch
+   * @param {number} time
+   */
+  renderPanorama(camYaw, camPitch, time) {
+    World3D.initStars();
+    const { ctx, width: w, height: h } = Renderer;
+    const P = (yaw, pitch) => World3D.project(yaw, pitch, camYaw, camPitch);
+
+    const sky = ctx.createLinearGradient(0, 0, 0, h);
+    sky.addColorStop(0, '#060812');
+    sky.addColorStop(0.45, '#0a0a14');
+    sky.addColorStop(1, '#14101a');
+    ctx.fillStyle = sky;
+    ctx.fillRect(0, 0, w, h);
+
+    const horizon = P(0, 0);
+
+    for (let i = -14; i <= 14; i++) {
+      const worldYaw = i * 0.42;
+      const topPitch = 0.1 + Math.abs(i % 5) * 0.05;
+      const top = P(worldYaw, topPitch);
+      const base = P(worldYaw, 0);
+      if (base.x < -80 || base.x > w + 80) continue;
+      const bh = Math.max(8, base.y - top.y);
+      ctx.fillStyle = `rgba(${30 + (i % 3) * 15},${40 + (i % 4) * 10},${55 + (i % 5) * 8},0.35)`;
+      ctx.fillRect(base.x - 18, top.y, 36, bh);
+    }
+
+    for (let i = -18; i <= 18; i++) {
+      const worldYaw = i * 0.28;
+      const top = P(worldYaw, 0);
+      const bottom = P(worldYaw, -0.82);
+      if (top.x < -20 && bottom.x < -20) continue;
+      if (top.x > w + 20 && bottom.x > w + 20) continue;
+      const rel = World3D.normalizeAngle(worldYaw - camYaw);
+      const alpha = Math.max(0.03, 0.14 - Math.abs(rel) * 0.06);
+      ctx.strokeStyle = `rgba(0,255,136,${alpha})`;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(top.x, top.y);
+      ctx.lineTo(bottom.x, bottom.y);
+      ctx.stroke();
+    }
+
+    for (let j = 1; j <= 10; j++) {
+      const pitch = -0.07 * j;
+      const gy = P(0, pitch).y;
+      if (gy < 0 || gy > h) continue;
+      ctx.strokeStyle = `rgba(0,255,136,${0.07 * (1 - j / 10)})`;
+      ctx.beginPath();
+      ctx.moveTo(w * 0.05, gy);
+      ctx.lineTo(w * 0.95, gy);
+      ctx.stroke();
+    }
+
+    ctx.strokeStyle = 'rgba(0,255,136,0.25)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(0, horizon.y);
+    ctx.lineTo(w, horizon.y);
+    ctx.stroke();
+
+    for (const star of World3D.stars) {
+      const sp = P(star.yaw, star.pitch);
+      if (sp.x < 0 || sp.x > w || sp.y < 0 || sp.y > h) continue;
+      ctx.fillStyle = `rgba(220,230,255,${star.brightness})`;
+      ctx.fillRect(sp.x, sp.y, star.size, star.size);
+    }
+
+    ctx.font = '11px Consolas, monospace';
+    ctx.fillStyle = 'rgba(0,255,136,0.35)';
+    ctx.textAlign = 'center';
+    const dirs = [
+      { label: 'N', yaw: 0 }, { label: 'E', yaw: Math.PI / 2 },
+      { label: 'S', yaw: Math.PI }, { label: 'W', yaw: -Math.PI / 2 },
+    ];
+    for (const d of dirs) {
+      const rel = World3D.normalizeAngle(d.yaw - camYaw);
+      if (Math.abs(rel) >= World3D.FOV_H * 0.48) continue;
+      const dp = P(d.yaw, 0.52);
+      ctx.fillText(d.label, dp.x, dp.y);
+    }
+
+    const yawDeg = Math.round((camYaw * 180) / Math.PI);
+    ctx.fillStyle = 'rgba(136,136,136,0.5)';
+    ctx.textAlign = 'left';
+    ctx.fillText(`YAW ${yawDeg}°`, 12, h - 12);
+  },
+};
+
+// ─── Mode360: 四模式共用的 360° 辅助 ────────────────────────────────────────
+const Mode360 = {
+  /** @returns {boolean} */
+  enabled() { return Input.useCamera; },
+
+  /**
+   * 网格格转世界角
+   * @param {number} col
+   * @param {number} row
+   * @param {number} cols
+   * @param {number} rows
+   */
+  cellToWorld(col, row, cols, rows) {
+    const u = (col + 0.5) / cols - 0.5;
+    const v = (row + 0.5) / rows - 0.5;
+    return {
+      yaw: u * World3D.FOV_H * 0.88,
+      pitch: -v * World3D.FOV_V * 0.62,
+    };
+  },
+
+  /** @returns {{yaw:number,pitch:number}} */
+  randomWorld() {
+    return {
+      yaw: (Math.random() - 0.5) * World3D.FOV_H * 0.82,
+      pitch: (Math.random() - 0.5) * World3D.FOV_V * 0.52,
+    };
+  },
+
+  /**
+   * @param {number} yaw
+   * @param {number} pitch
+   */
+  project(yaw, pitch) {
+    return World3D.project(yaw, pitch, Input.cameraYaw, Input.cameraPitch);
+  },
+
+  /** @param {number} [time] */
+  drawBackground(time) {
+    World3D.renderPanorama(Input.cameraYaw, Input.cameraPitch, time || 0);
+  },
+
+  /**
+   * 绘制视野外目标指示箭头
+   * @param {{x:number,y:number,visible:boolean}} proj
+   */
+  drawOffscreenIndicator(proj) {
+    if (proj.visible) return;
+    const { ctx } = Renderer;
+    const cx = Renderer.width / 2;
+    const cy = Renderer.height / 2;
+    const angle = Math.atan2(proj.y - cy, proj.x - cx);
+    const ex = cx + Math.cos(angle) * (Renderer.width / 2 - 30);
+    const ey = cy + Math.sin(angle) * (Renderer.height / 2 - 30);
+    ctx.save();
+    ctx.fillStyle = 'rgba(0,255,136,0.6)';
+    ctx.beginPath();
+    ctx.moveTo(ex + Math.cos(angle) * 12, ey + Math.sin(angle) * 12);
+    ctx.lineTo(ex + Math.cos(angle + 2.5) * 8, ey + Math.sin(angle + 2.5) * 8);
+    ctx.lineTo(ex + Math.cos(angle - 2.5) * 8, ey + Math.sin(angle - 2.5) * 8);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  },
+};
+
+// ─── Input: 鼠标/键盘输入 ───────────────────────────────────────────────────
+const Input = {
+  crosshairX: 0,
+  crosshairY: 0,
+  rawX: 0,
+  rawY: 0,
+  mouseDown: false,
+  justClicked: false,
+  frameClickPending: false,
+  justReleased: false,
+  shootAnim: 0,
+  pointerLocked: false,
+  /** 360° 相机模式（追踪/扫射） */
+  useCamera: false,
+  cameraYaw: 0,
+  cameraPitch: 0,
+  /** 恢复 Pointer Lock 后跳过若干帧鼠标增量，避免 ESC 后轴向异常 */
+  skipCameraMoves: 0,
+  /** @type {Set<string>} */
+  keys: new Set(),
+  /** @type {Set<string>} */
+  keysJustPressed: new Set(),
+
+  /**
+   * @param {HTMLCanvasElement} canvas
+   */
+  init(canvas) {
+    Input.crosshairX = window.innerWidth / 2;
+    Input.crosshairY = window.innerHeight / 2;
+    Input.rawX = Input.crosshairX;
+    Input.rawY = Input.crosshairY;
+
+    canvas.addEventListener('mousedown', (e) => {
+      if (e.button === 0) {
+        Input.mouseDown = true;
+        // 扫射转移为按住跟踪，不在按下时触发射击判定
+        if (State.phase === GAME_STATE.PLAYING && State.mode !== 'flickShot') {
+          Input.justClicked = true;
+          Input.frameClickPending = true;
+          Input.shootAnim = 1;
+        }
+      }
+    });
+    canvas.addEventListener('mouseup', (e) => {
+      if (e.button === 0) Input.justReleased = true;
+      Input.mouseDown = false;
+    });
+    canvas.addEventListener('click', () => {
+      if (State.phase === GAME_STATE.PLAYING && Input.useCamera && !Input.pointerLocked) {
+        Input.lockPointer();
+      }
+    });
+
+    document.addEventListener('mousemove', (e) => {
+      const sens = State.settings.sensitivity;
+      if (State.phase === GAME_STATE.PAUSED) return;
+
+      // 360° 追踪：仅 Pointer Lock 有效时处理，避免 ESC 后 client 坐标干扰导致 Y 轴翻转
+      if (Input.useCamera) {
+        if (State.phase !== GAME_STATE.PLAYING) return;
+        if (!Input.pointerLocked || document.pointerLockElement !== canvas) return;
+        if (Input.skipCameraMoves > 0) {
+          Input.skipCameraMoves--;
+          return;
+        }
+        const rate = sens * 0.003;
+        Input.cameraYaw += e.movementX * rate;
+        // pitch>0 = 抬头；与 World3D.project 约定一致（鼠标上移 → 视角上抬）
+        Input.cameraPitch = Math.max(-1.35, Math.min(1.35, Input.cameraPitch - e.movementY * rate));
+        Input.crosshairX = Renderer.width / 2;
+        Input.crosshairY = Renderer.height / 2;
+        return;
+      }
+
+      if (Input.pointerLocked && document.pointerLockElement === canvas) {
+        const mx = e.movementX * sens;
+        const my = e.movementY * sens;
+        Input.rawX = Math.max(0, Math.min(Renderer.width, Input.rawX + mx));
+        Input.rawY = Math.max(0, Math.min(Renderer.height, Input.rawY + my));
+        Input.crosshairX = Input.rawX;
+        Input.crosshairY = Input.rawY;
+      } else if (State.phase === GAME_STATE.PLAYING) {
+        Input.rawX = e.clientX;
+        Input.rawY = e.clientY;
+        Input.crosshairX = Input.rawX;
+        Input.crosshairY = Input.rawY;
+      } else if (State.phase !== GAME_STATE.PLAYING) {
+        Input.rawX = e.clientX;
+        Input.rawY = e.clientY;
+        Input.crosshairX = Input.rawX;
+        Input.crosshairY = Input.rawY;
+      }
+    });
+
+    document.addEventListener('keydown', (e) => {
+      if (!Input.keys.has(e.code)) Input.keysJustPressed.add(e.code);
+      Input.keys.add(e.code);
+      if (e.code === 'Escape') Engine.handleEscape();
+      if (e.code === 'KeyR') Engine.handleRestart();
+      if (e.code === 'Tab') { e.preventDefault(); State.hudVisible = !State.hudVisible; }
+    });
+    document.addEventListener('keyup', (e) => Input.keys.delete(e.code));
+
+    document.addEventListener('pointerlockchange', () => {
+      Input.pointerLocked = document.pointerLockElement === canvas;
+      if (Input.pointerLocked) {
+        Input.skipCameraMoves = 2;
+        if (Input.useCamera) {
+          Input.crosshairX = Renderer.width / 2;
+          Input.crosshairY = Renderer.height / 2;
+        } else {
+          Input.rawX = Renderer.width / 2;
+          Input.rawY = Renderer.height / 2;
+          Input.crosshairX = Input.rawX;
+          Input.crosshairY = Input.rawY;
+        }
+      }
+    });
+  },
+
+  /** 每帧末尾清除瞬时输入标志 */
+  poll() {
+    if (!Input.frameClickPending) Input.justClicked = false;
+    Input.frameClickPending = false;
+    Input.justReleased = false;
+    Input.keysJustPressed.clear();
+    if (Input.shootAnim > 0) Input.shootAnim = Math.max(0, Input.shootAnim - 0.08);
+  },
+
+  /** 注册一次射击（每帧只消费一次） */
+  consumeClick() {
+    if (!Input.justClicked) return false;
+    Input.justClicked = false;
+    Input.frameClickPending = false;
+    return true;
+  },
+
+  lockPointer() {
+    if (State.settings.rawInput || Input.useCamera) Renderer.canvas.requestPointerLock?.();
+  },
+
+  unlockPointer() {
+    document.exitPointerLock?.();
+  },
+
+  /** 切换 360° 相机模式 */
+  setCameraMode(enabled) {
+    Input.useCamera = enabled;
+    Input.resetCamera();
+  },
+
+  /** 重置相机到正前方 */
+  resetCamera() {
+    Input.cameraYaw = 0;
+    Input.cameraPitch = 0;
+    Input.crosshairX = Renderer.width / 2;
+    Input.crosshairY = Renderer.height / 2;
+  },
+
+  /** 准星是否在屏幕中心附近命中投影点 */
+  isCenterOnScreen(sx, sy, radius) {
+    const cx = Renderer.width / 2;
+    const cy = Renderer.height / 2;
+    const dx = sx - cx;
+    const dy = sy - cy;
+    return dx * dx + dy * dy <= radius * radius;
+  },
+
+  /** 360° 模式：点击时检测中心准星是否命中投影目标 */
+  clickHitCenter(sx, sy, radius) {
+    if (!Input.justClicked) return false;
+    if (!Input.isCenterOnScreen(sx, sy, radius)) return false;
+    Input.consumeClick();
+    return true;
+  },
+
+  /**
+   * 检测准星是否在目标圆内
+   * @param {number} tx - 目标中心 X
+   * @param {number} ty - 目标中心 Y
+   * @param {number} radius
+   * @returns {boolean}
+   */
+  isOnTarget(tx, ty, radius) {
+    const dx = Input.crosshairX - tx;
+    const dy = Input.crosshairY - ty;
+    return dx * dx + dy * dy <= radius * radius;
+  },
+
+  /**
+   * 检测点击是否命中目标
+   * @param {number} tx
+   * @param {number} ty
+   * @param {number} radius
+   * @returns {boolean}
+   */
+  clickHit(tx, ty, radius) {
+    if (!Input.justClicked) return false;
+    if (!Input.isOnTarget(tx, ty, radius)) return false;
+    Input.consumeClick();
+    return true;
+  },
+
+  /** @returns {number} 准星到目标中心的距离 */
+  distanceTo(tx, ty) {
+    const dx = Input.crosshairX - tx;
+    const dy = Input.crosshairY - ty;
+    return Math.sqrt(dx * dx + dy * dy);
+  },
+};
+
+// ─── Audio: Web Audio 音效 ──────────────────────────────────────────────────
+const Audio = {
+  /** @type {AudioContext|null} */
+  ctx: null,
+
+  init() {
+    if (!State.settings.audioEnabled) return;
+    Audio.ctx = Audio.ctx || new (window.AudioContext || window.webkitAudioContext)();
+  },
+
+  /**
+   * 播放短促音
+   * @param {number} freq
+   * @param {number} duration
+   * @param {'sine'|'square'} type
+   * @param {number} gain
+   */
+  playTone(freq, duration, type = 'sine', gain = 0.15) {
+    if (!State.settings.audioEnabled) return;
+    Audio.init();
+    if (!Audio.ctx) return;
+    const t = Audio.ctx.currentTime;
+    const osc = Audio.ctx.createOscillator();
+    const g = Audio.ctx.createGain();
+    osc.type = type;
+    osc.frequency.value = freq;
+    g.gain.setValueAtTime(gain, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + duration);
+    osc.connect(g);
+    g.connect(Audio.ctx.destination);
+    osc.start(t);
+    osc.stop(t + duration);
+  },
+
+  playHit() { Audio.playTone(880, 0.04, 'square', 0.12); },
+  playMiss() { Audio.playTone(180, 0.08, 'sine', 0.08); },
+  playTick() { Audio.playTone(660, 0.06, 'sine', 0.1); },
+};
+
+// ─── 对象池：减少 GC ─────────────────────────────────────────────────────────
+const Pool = {
+  /** @type {Array<{x:number,y:number,vx:number,vy:number,life:number}>} */
+  particles: [],
+  poolIndex: 0,
+
+  /**
+   * 生成击中粒子（预分配复用）
+   * @param {number} x
+   * @param {number} y
+   * @returns {Array}
+   */
+  spawnHitParticles(x, y) {
+    const result = [];
+    const count = 10;
+    for (let i = 0; i < count; i++) {
+      const angle = (Math.PI * 2 * i) / count + Math.random() * 0.3;
+      const speed = 80 + Math.random() * 120;
+      let p = Pool.particles[Pool.poolIndex];
+      if (!p) { p = {}; Pool.particles[Pool.poolIndex] = p; }
+      p.x = x; p.y = y;
+      p.vx = Math.cos(angle) * speed;
+      p.vy = Math.sin(angle) * speed;
+      p.life = 1;
+      result.push(p);
+      Pool.poolIndex = (Pool.poolIndex + 1) % 200;
+    }
+    return result;
+  },
+};
+
+// ─── 通用目标动画辅助 ─────────────────────────────────────────────────────────
+const TargetAnim = {
+  /**
+   * 弹出缩放：0→1，100ms ease-out
+   * @param {number} age - 目标存活时间（秒）
+   * @returns {number} 0-1
+   */
+  popScale(age) {
+    const t = Math.min(age / 0.1, 1);
+    return 1 - Math.pow(1 - t, 3);
+  },
+
+  /**
+   * @param {Array} particles
+   * @param {number} dt
+   */
+  updateParticles(particles, dt) {
+    for (let i = particles.length - 1; i >= 0; i--) {
+      const p = particles[i];
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      p.life -= dt * 2.5;
+      if (p.life <= 0) particles.splice(i, 1);
+    }
+  },
+};
+
+// ─── GameModes ──────────────────────────────────────────────────────────────
+const GameModes = {
+
+  /** 共享：注册击中/失误 */
+  _registerHit(session, ttc) {
+    session.hits++;
+    session.streak++;
+    session.maxStreak = Math.max(session.maxStreak, session.streak);
+    session.shots.push({ type: 'hit', time: ttc, timestamp: performance.now() });
+    session.ttcSum += ttc;
+    session.ttcCount++;
+    State.shakeTimer = State.settings.screenShake ? 0.15 : 0;
+    Audio.playHit();
+  },
+
+  _registerMiss(session) {
+    session.misses++;
+    session.streak = 0;
+    session.shots.push({ type: 'miss', timestamp: performance.now() });
+    Audio.playMiss();
+  },
+
+  // ── A. 网格射击 Grid Shot ────────────────────────────────────────────────
+  gridShot: {
+    /** @type {object|null} */
+    data: null,
+
+    onStart() {
+      const p = State.modeParams;
+      Input.resetCamera();
+      const cols = p.gridSize;
+      const rows = p.gridSize;
+      const cellW = Renderer.width / cols;
+      const cellH = Renderer.height / rows;
+      const maxSim = Math.min(12, cols * rows);
+      GameModes.gridShot.data = {
+        cols, rows, cellW, cellH,
+        targetRadius: p.targetSize / 2,
+        totalTargets: p.totalTargets,
+        simultaneous: Math.min(Math.max(1, p.simultaneousCount), maxSim),
+        clusterRadius: p.clusterRadius || 3,
+        recentCells: [],
+        recentCooldown: 4500,
+        recentBlockRadius: 2,
+        spawned: 0,
+        hits: 0,
+        active: [],
+        clusterCenter: null,
+        spawnTimer: 0,
+        spawnDelay: p.spawnInterval / 1000,
+        particles: [],
+        missFlash: 0,
+      };
+      State.session.remaining = p.totalTargets;
+      GameModes.gridShot._fillActive();
+    },
+
+    /** 记录近期被击中的格子，短期内禁止在同位置补位 */
+    _recordHitCell(col, row) {
+      const d = GameModes.gridShot.data;
+      const now = performance.now();
+      const until = now + d.recentCooldown;
+      for (let dc = -d.recentBlockRadius; dc <= d.recentBlockRadius; dc++) {
+        for (let dr = -d.recentBlockRadius; dr <= d.recentBlockRadius; dr++) {
+          const c = col + dc;
+          const r = row + dr;
+          if (c >= 0 && c < d.cols && r >= 0 && r < d.rows) {
+            d.recentCells.push({ col: c, row: r, until });
+          }
+        }
+      }
+      GameModes.gridShot._pruneRecentCells();
+    },
+
+    _pruneRecentCells() {
+      const d = GameModes.gridShot.data;
+      const now = performance.now();
+      d.recentCells = d.recentCells.filter((c) => c.until > now);
+    },
+
+    _isCellBlocked(col, row) {
+      GameModes.gridShot._pruneRecentCells();
+      const d = GameModes.gridShot.data;
+      return d.recentCells.some((c) => c.col === col && c.row === row);
+    },
+
+    /** 获取某格周围聚集区内的空闲格（切比雪夫距离） */
+    _cellsNearCluster(active, centerCol, centerRow, radius, excludeBlocked = true) {
+      const d = GameModes.gridShot.data;
+      const occupied = new Set(active.map(t => `${t.col},${t.row}`));
+      const cells = [];
+      for (let c = 0; c < d.cols; c++) {
+        for (let r = 0; r < d.rows; r++) {
+          if (occupied.has(`${c},${r}`)) continue;
+          if (excludeBlocked && GameModes.gridShot._isCellBlocked(c, r)) continue;
+          const dist = Math.max(Math.abs(c - centerCol), Math.abs(r - centerRow));
+          if (dist <= radius) cells.push({ col: c, row: r, dist });
+        }
+      }
+      cells.sort((a, b) => a.dist - b.dist);
+      return cells;
+    },
+
+    /** 选取新的聚集中心（留边距保证簇完整） */
+    _pickClusterCenter() {
+      const d = GameModes.gridShot.data;
+      const pad = d.clusterRadius;
+      const minC = pad;
+      const maxC = d.cols - 1 - pad;
+      const minR = pad;
+      const maxR = d.rows - 1 - pad;
+      if (minC > maxC || minR > maxR) {
+        return {
+          col: Math.floor(Math.random() * d.cols),
+          row: Math.floor(Math.random() * d.rows),
+        };
+      }
+      return {
+        col: minC + Math.floor(Math.random() * (maxC - minC + 1)),
+        row: minR + Math.floor(Math.random() * (maxR - minR + 1)),
+      };
+    },
+
+    /** 由网格格创建目标（含 360° 世界坐标） */
+    _makeTarget(cell, id) {
+      const d = GameModes.gridShot.data;
+      const w = Mode360.cellToWorld(cell.col, cell.row, d.cols, d.rows);
+      return {
+        id,
+        col: cell.col,
+        row: cell.row,
+        yaw: w.yaw,
+        pitch: w.pitch,
+        x: (cell.col + 0.5) * d.cellW,
+        y: (cell.row + 0.5) * d.cellH,
+        age: 0,
+        spawnTime: performance.now(),
+      };
+    },
+
+    /** @returns {{x:number,y:number,visible:boolean}} */
+    _targetScreen(t) {
+      if (Mode360.enabled()) return Mode360.project(t.yaw, t.pitch);
+      return { x: t.x, y: t.y, visible: true };
+    },
+
+    _clickTarget(t, radius) {
+      if (Mode360.enabled()) {
+        const p = Mode360.project(t.yaw, t.pitch);
+        return Input.clickHitCenter(p.x, p.y, radius);
+      }
+      return Input.clickHit(t.x, t.y, radius);
+    },
+
+    /** 补满同屏目标 — 同一批目标聚集在相邻网格 */
+    _fillActive() {
+      const d = GameModes.gridShot.data;
+      const need = Math.min(d.simultaneous, d.totalTargets - d.spawned);
+      if (need <= 0) return;
+
+      if (!d.clusterCenter || d.active.length === 0) {
+        d.clusterCenter = GameModes.gridShot._pickClusterCenter();
+      }
+
+      let cells = GameModes.gridShot._cellsNearCluster(
+        d.active, d.clusterCenter.col, d.clusterCenter.row, d.clusterRadius
+      );
+
+      if (cells.length < need) {
+        d.clusterCenter = GameModes.gridShot._pickClusterCenter();
+        cells = GameModes.gridShot._cellsNearCluster(
+          d.active, d.clusterCenter.col, d.clusterCenter.row, d.clusterRadius
+        );
+      }
+
+      for (let i = 0; i < need && i < cells.length && d.spawned < d.totalTargets; i++) {
+        d.active.push(GameModes.gridShot._makeTarget(cells[i], d.spawned));
+        d.spawned++;
+      }
+    },
+
+    /** 单目标消灭后在聚集区补位，避开刚被击中的格子 */
+    _spawnOneInCluster(avoidCol, avoidRow) {
+      const d = GameModes.gridShot.data;
+      if (d.spawned >= d.totalTargets || d.active.length >= d.simultaneous) return;
+      if (!d.clusterCenter) d.clusterCenter = GameModes.gridShot._pickClusterCenter();
+
+      let cells = GameModes.gridShot._cellsNearCluster(
+        d.active, d.clusterCenter.col, d.clusterCenter.row, d.clusterRadius, true
+      );
+
+      if (avoidCol !== undefined && avoidRow !== undefined) {
+        cells = cells.filter((c) => !(c.col === avoidCol && c.row === avoidRow));
+      }
+
+      if (!cells.length) {
+        cells = GameModes.gridShot._cellsNearCluster(
+          d.active, d.clusterCenter.col, d.clusterCenter.row, d.clusterRadius + 2, true
+        );
+        if (avoidCol !== undefined && avoidRow !== undefined) {
+          cells = cells.filter((c) => !(c.col === avoidCol && c.row === avoidRow));
+        }
+      }
+
+      if (!cells.length) {
+        d.clusterCenter = GameModes.gridShot._pickClusterCenter();
+        cells = GameModes.gridShot._cellsNearCluster(
+          d.active, d.clusterCenter.col, d.clusterCenter.row, d.clusterRadius, true
+        );
+      }
+
+      if (!cells.length) return;
+
+      if (avoidCol !== undefined && avoidRow !== undefined) {
+        cells.sort((a, b) => {
+          const da = Math.max(Math.abs(a.col - avoidCol), Math.abs(a.row - avoidRow));
+          const db = Math.max(Math.abs(b.col - avoidCol), Math.abs(b.row - avoidRow));
+          return db - da;
+        });
+      }
+
+      const pool = cells.slice(0, Math.min(8, cells.length));
+      const cell = pool[Math.floor(Math.random() * pool.length)];
+      d.active.push(GameModes.gridShot._makeTarget(cell, d.spawned));
+      d.spawned++;
+    },
+
+    update(dt) {
+      const d = GameModes.gridShot.data;
+      const session = State.session;
+
+      TargetAnim.updateParticles(d.particles, dt);
+      if (d.missFlash > 0) d.missFlash -= dt;
+
+      if (d.hits >= d.totalTargets) {
+        Engine.endTraining();
+        return;
+      }
+
+      for (let i = d.active.length - 1; i >= 0; i--) {
+        const t = d.active[i];
+        t.age += dt;
+
+        if (GameModes.gridShot._clickTarget(t, d.targetRadius)) {
+          const ttc = performance.now() - t.spawnTime;
+          const hitCol = t.col;
+          const hitRow = t.row;
+          const p = GameModes.gridShot._targetScreen(t);
+          GameModes._registerHit(session, ttc);
+          d.particles.push(...Pool.spawnHitParticles(p.x, p.y));
+          d.hits++;
+          d.active.splice(i, 1);
+          session.remaining = d.totalTargets - d.hits;
+          session.score += Math.max(100, Math.round(500 - ttc * 0.5));
+          GameModes.gridShot._recordHitCell(hitCol, hitRow);
+          GameModes.gridShot._spawnOneInCluster(hitCol, hitRow);
+          return;
+        }
+
+        if (State.modeParams.timeLimit > 0 && t.age > State.modeParams.timeLimit / 1000) {
+          GameModes._registerMiss(session);
+          GameModes.gridShot._recordHitCell(t.col, t.row);
+          d.active.splice(i, 1);
+          GameModes.gridShot._spawnOneInCluster(t.col, t.row);
+        }
+      }
+
+      if (Input.consumeClick()) {
+        GameModes._registerMiss(session);
+        d.missFlash = 0.2;
+      }
+
+      if (d.active.length === 0 && d.spawned >= d.totalTargets && d.hits >= d.totalTargets) {
+        Engine.endTraining();
+      } else if (d.active.length === 0) {
+        d.clusterCenter = null;
+        d.spawnTimer -= dt;
+        if (d.spawnTimer <= 0) GameModes.gridShot._fillActive();
+      }
+    },
+
+    render() {
+      const d = GameModes.gridShot.data;
+      const shake = Renderer.getShakeOffset();
+      Renderer.ctx.save();
+      Renderer.ctx.translate(shake.x, shake.y);
+
+      if (Mode360.enabled()) {
+        Mode360.drawBackground(0);
+      } else {
+        Renderer.ctx.strokeStyle = 'rgba(255,255,255,0.025)';
+        Renderer.ctx.lineWidth = 1;
+        const step = d.cols > 20 ? 4 : 1;
+        for (let c = step; c < d.cols; c += step) {
+          Renderer.ctx.globalAlpha = c % (step * 5) === 0 ? 0.08 : 0.04;
+          Renderer.ctx.beginPath();
+          Renderer.ctx.moveTo(c * d.cellW, 0);
+          Renderer.ctx.lineTo(c * d.cellW, Renderer.height);
+          Renderer.ctx.stroke();
+        }
+        for (let r = step; r < d.rows; r += step) {
+          Renderer.ctx.globalAlpha = r % (step * 5) === 0 ? 0.08 : 0.04;
+          Renderer.ctx.beginPath();
+          Renderer.ctx.moveTo(0, r * d.cellH);
+          Renderer.ctx.lineTo(Renderer.width, r * d.cellH);
+          Renderer.ctx.stroke();
+        }
+        Renderer.ctx.globalAlpha = 1;
+
+        if (d.clusterCenter && d.active.length > 0) {
+          const cx = (d.clusterCenter.col + 0.5) * d.cellW;
+          const cy = (d.clusterCenter.row + 0.5) * d.cellH;
+          const cr = d.clusterRadius * Math.max(d.cellW, d.cellH);
+          Renderer.ctx.strokeStyle = 'rgba(0,255,136,0.08)';
+          Renderer.ctx.setLineDash([4, 6]);
+          Renderer.ctx.beginPath();
+          Renderer.ctx.arc(cx, cy, cr, 0, Math.PI * 2);
+          Renderer.ctx.stroke();
+          Renderer.ctx.setLineDash([]);
+        }
+      }
+
+      for (const t of d.active) {
+        const scale = TargetAnim.popScale(t.age);
+        const p = GameModes.gridShot._targetScreen(t);
+        if (Mode360.enabled() && !p.visible) {
+          Mode360.drawOffscreenIndicator(p);
+          continue;
+        }
+        Renderer.drawTarget(p.x, p.y, d.targetRadius, 1, scale);
+      }
+      Renderer.drawParticles(d.particles);
+
+      if (d.missFlash > 0) {
+        Renderer.ctx.fillStyle = `rgba(255,68,68,${d.missFlash * 0.3})`;
+        Renderer.ctx.fillRect(0, 0, Renderer.width, Renderer.height);
+      }
+      Renderer.ctx.restore();
+    },
+  },
+
+  // ── B. 追踪训练 Tracking（360° 视角）────────────────────────────────────
+  tracking: {
+    data: null,
+
+    onStart() {
+      const p = State.modeParams;
+      Input.resetCamera();
+      GameModes.tracking.data = {
+        radius: p.targetSize / 2,
+        speed: p.speed,
+        path: p.pathType,
+        time: 0,
+        duration: p.duration,
+        onTargetTime: 0,
+        distanceSum: 0,
+        sampleCount: 0,
+        phase: Math.random() * Math.PI * 2,
+        targetYaw: 0.3,
+        targetPitch: 0.15,
+        sx: Renderer.width / 2,
+        sy: Renderer.height / 2,
+      };
+      State.session.remaining = p.duration;
+    },
+
+    /** 2D 屏幕路径（360° 关闭时） */
+    _updateScreenTarget(d) {
+      const w = Renderer.width;
+      const h = Renderer.height;
+      const margin = 80;
+      const cx = w / 2;
+      const cy = h / 2;
+      const ampX = (w - margin * 2) / 2;
+      const ampY = (h - margin * 2) / 2;
+      const t = d.time;
+      const spd = d.speed / 420;
+      const omegaX = spd / Math.max(ampX, 1);
+      const omegaY = spd / Math.max(ampY, 1);
+      const radius = Math.min(ampX, ampY) * 0.75;
+      const omegaC = spd / Math.max(radius, 1);
+
+      switch (d.path) {
+        case 'horizontal':
+          d.sx = cx + Math.sin(omegaX * t + d.phase) * ampX;
+          d.sy = cy;
+          break;
+        case 'vertical':
+          d.sx = cx;
+          d.sy = cy + Math.sin(omegaY * t + d.phase) * ampY;
+          break;
+        case 'circle':
+          d.sx = cx + Math.cos(omegaC * t + d.phase) * radius;
+          d.sy = cy + Math.sin(omegaC * t + d.phase) * radius;
+          break;
+        case 'figure8':
+          d.sx = cx + Math.sin(omegaX * t + d.phase) * ampX * 0.65;
+          d.sy = cy + Math.sin(omegaX * 2 * t + d.phase) * ampY * 0.45;
+          break;
+        case 'random': {
+          const o = spd * 0.35;
+          d.sx = cx + (Math.sin(o * t + d.phase) * 0.55 + Math.sin(o * 1.61 * t + 1.7) * 0.28) * ampX;
+          d.sy = cy + (Math.sin(o * 1.29 * t + 2.3) * 0.55 + Math.sin(o * 1.93 * t + 0.5) * 0.28) * ampY;
+          break;
+        }
+      }
+    },
+
+    /**
+     * 在世界坐标系中更新目标角度（可绕 360° 移动）
+     * @param {object} d
+     */
+    _updateWorldTarget(d) {
+      const t = d.time;
+      const spd = d.speed / 420;
+
+      switch (d.path) {
+        case 'horizontal':
+          d.targetYaw = Math.sin(t * spd + d.phase) * 1.8;
+          d.targetPitch = 0.1;
+          break;
+        case 'vertical':
+          d.targetYaw = 0.2;
+          d.targetPitch = Math.sin(t * spd + d.phase) * 0.75;
+          break;
+        case 'circle':
+          d.targetYaw = Math.cos(t * spd + d.phase) * 1.4;
+          d.targetPitch = Math.sin(t * spd + d.phase) * 0.55;
+          break;
+        case 'figure8':
+          d.targetYaw = Math.sin(t * spd + d.phase) * 1.6;
+          d.targetPitch = Math.sin(t * spd * 2 + d.phase) * 0.45;
+          break;
+        case 'random': {
+          const o = spd * 0.6;
+          d.targetYaw = Math.sin(t * o + d.phase) * 1.2
+            + Math.sin(t * o * 1.7 + 1.3) * 0.5;
+          d.targetPitch = Math.sin(t * o * 1.3 + 2.1) * 0.4
+            + Math.sin(t * o * 2.3 + 0.7) * 0.25;
+          break;
+        }
+      }
+    },
+
+    update(dt) {
+      const d = GameModes.tracking.data;
+      const session = State.session;
+      d.time += dt;
+      session.remaining = Math.max(0, Math.ceil(d.duration - d.time));
+
+      if (Mode360.enabled()) {
+        GameModes.tracking._updateWorldTarget(d);
+        const proj = Mode360.project(d.targetYaw, d.targetPitch);
+        d.sx = proj.x;
+        d.sy = proj.y;
+      } else {
+        GameModes.tracking._updateScreenTarget(d);
+      }
+
+      const tx = d.sx;
+      const ty = d.sy;
+      const cx = Renderer.width / 2;
+      const cy = Renderer.height / 2;
+      const dist = Math.hypot(
+        tx - (Mode360.enabled() ? cx : Input.crosshairX),
+        ty - (Mode360.enabled() ? cy : Input.crosshairY)
+      );
+      d.distanceSum += dist;
+      d.sampleCount++;
+
+      const tracking = Mode360.enabled()
+        ? Input.isCenterOnScreen(tx, ty, d.radius)
+        : Input.isOnTarget(tx, ty, d.radius);
+      if (tracking) {
+        d.onTargetTime += dt;
+        session.streak += dt;
+      } else {
+        session.streak = 0;
+      }
+
+      const avgDist = d.distanceSum / Math.max(d.sampleCount, 1);
+      session.trackingCoverage = (d.onTargetTime / d.duration) * 100;
+      session.avgDistance = avgDist;
+      session.hits = Math.floor(d.onTargetTime * 10);
+      session.score = Math.round(
+        session.trackingCoverage * 80
+        + Math.max(0, 2000 - avgDist * 8)
+        + session.streak * 2
+      );
+
+      if (d.time >= d.duration) {
+        session.trackingCoverage = (d.onTargetTime / d.duration) * 100;
+        session.avgDistance = avgDist;
+        session.accuracy = session.trackingCoverage;
+        Engine.endTraining();
+      }
+    },
+
+    render() {
+      const d = GameModes.tracking.data;
+      if (Mode360.enabled()) {
+        Mode360.drawBackground(d.time);
+      }
+
+      const tx = d.sx;
+      const ty = d.sy;
+      const onTarget = Mode360.enabled()
+        ? Input.isCenterOnScreen(tx, ty, d.radius)
+        : Input.isOnTarget(tx, ty, d.radius);
+      const { ctx } = Renderer;
+      const proj360 = Mode360.enabled() ? Mode360.project(d.targetYaw, d.targetPitch) : null;
+
+      if (onTarget) {
+        ctx.save();
+        ctx.strokeStyle = 'rgba(0,255,136,0.4)';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(tx, ty, d.radius + 8, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      if (!Mode360.enabled() || proj360.visible) {
+        Renderer.drawTarget(tx, ty, d.radius, 1, 1, onTarget ? HIT_COLOR : TARGET_COLOR);
+      } else if (proj360) {
+        Mode360.drawOffscreenIndicator(proj360);
+      }
+    },
+  },
+
+  // ── C. 反应测试 Reaction ─────────────────────────────────────────────────
+  reaction: {
+    data: null,
+
+    onStart() {
+      const p = State.modeParams;
+      Input.resetCamera();
+      GameModes.reaction.data = {
+        total: p.totalTrials,
+        current: 0,
+        phase: 'waiting', // waiting | ready | result
+        waitTimer: 1 + Math.random() * (p.prepTimeMax - p.prepTimeMin) + p.prepTimeMin,
+        appearTime: 0,
+        timeout: p.targetTimeout / 1000,
+        radius: p.targetSize / 2,
+        tx: 0, ty: 0,
+        tyaw: 0, tpitch: 0,
+        reactionTimes: [],
+        falseStarts: 0,
+        particles: [],
+      };
+      State.session.remaining = p.totalTrials;
+    },
+
+    _randomTarget() {
+      if (Mode360.enabled()) {
+        const w = Mode360.randomWorld();
+        return { tx: 0, ty: 0, tyaw: w.yaw, tpitch: w.pitch };
+      }
+      const pad = GameModes.reaction.data.radius + 40;
+      return {
+        tx: pad + Math.random() * (Renderer.width - pad * 2),
+        ty: pad + Math.random() * (Renderer.height - pad * 2),
+        tyaw: 0, tpitch: 0,
+      };
+    },
+
+    _targetScreen(d) {
+      if (Mode360.enabled()) return Mode360.project(d.tyaw, d.tpitch);
+      return { x: d.tx, y: d.ty, visible: true };
+    },
+
+    _clickTarget(d) {
+      const p = GameModes.reaction._targetScreen(d);
+      if (Mode360.enabled()) return Input.clickHitCenter(p.x, p.y, d.radius);
+      return Input.clickHit(d.tx, d.ty, d.radius);
+    },
+
+    update(dt) {
+      const d = GameModes.reaction.data;
+      const session = State.session;
+
+      if (d.phase === 'waiting') {
+        d.waitTimer -= dt;
+        if (Input.consumeClick()) {
+          d.falseStarts++;
+          GameModes._registerMiss(session);
+          d.waitTimer = 1 + Math.random() * 3 + State.modeParams.prepTimeMin;
+        }
+        if (d.waitTimer <= 0) {
+          d.phase = 'ready';
+          const pos = GameModes.reaction._randomTarget();
+          d.tx = pos.tx; d.ty = pos.ty;
+          d.tyaw = pos.tyaw; d.tpitch = pos.tpitch;
+          d.appearTime = performance.now();
+        }
+      } else if (d.phase === 'ready') {
+        if (GameModes.reaction._clickTarget(d)) {
+          const rt = performance.now() - d.appearTime;
+          const p = GameModes.reaction._targetScreen(d);
+          d.reactionTimes.push(rt);
+          GameModes._registerHit(session, rt);
+          d.particles.push(...Pool.spawnHitParticles(p.x, p.y));
+          d.current++;
+          session.remaining = d.total - d.current;
+          session.score += Math.max(50, Math.round(1000 - rt));
+          d.phase = 'waiting';
+          d.waitTimer = 1 + Math.random() * 3 + State.modeParams.prepTimeMin;
+          if (d.current >= d.total) {
+            session.reactionTimes = [...d.reactionTimes];
+            Engine.endTraining();
+          }
+        } else if (performance.now() - d.appearTime > d.timeout * 1000) {
+          GameModes._registerMiss(session);
+          d.current++;
+          session.remaining = d.total - d.current;
+          d.phase = 'waiting';
+          d.waitTimer = 1 + Math.random() * 3 + State.modeParams.prepTimeMin;
+          if (d.current >= d.total) {
+            session.reactionTimes = [...d.reactionTimes];
+            Engine.endTraining();
+          }
+        }
+      }
+      TargetAnim.updateParticles(d.particles, dt);
+    },
+
+    render() {
+      const d = GameModes.reaction.data;
+      const shake = Renderer.getShakeOffset();
+      Renderer.ctx.save();
+      Renderer.ctx.translate(shake.x, shake.y);
+
+      if (Mode360.enabled()) Mode360.drawBackground(0);
+
+      if (d.phase === 'waiting') {
+        Renderer.ctx.fillStyle = '#ff4444';
+        Renderer.ctx.font = '24px Consolas, monospace';
+        Renderer.ctx.textAlign = 'center';
+        Renderer.ctx.fillText(State.lang === 'zh' ? '等待目标... 请勿点击' : 'Wait... Don\'t click', Renderer.width / 2, Renderer.height / 2);
+      } else if (d.phase === 'ready') {
+        const p = GameModes.reaction._targetScreen(d);
+        if (Mode360.enabled() && !p.visible) Mode360.drawOffscreenIndicator(p);
+        else Renderer.drawTarget(p.x, p.y, d.radius, 1, 1);
+      }
+      Renderer.drawParticles(d.particles);
+      Renderer.ctx.restore();
+    },
+  },
+
+  // ── D. 扫射转移 — 按住跟踪移动球体 ───────────────────────────────────────
+  flickShot: {
+    data: null,
+
+    onStart() {
+      const p = State.modeParams;
+      Input.resetCamera();
+      GameModes.flickShot.data = {
+        radius: p.targetSize / 2,
+        total: p.totalRounds,
+        current: 0,
+        speed: p.speed,
+        path: p.pathType,
+        holdRequired: p.trackDuration,
+        holdTime: 0,
+        ball: null,
+        time: 0,
+        phase: Math.random() * Math.PI * 2,
+        particles: [],
+        trail: [],
+      };
+      State.session.remaining = p.totalRounds;
+      GameModes.flickShot._spawnBall();
+    },
+
+    /** 在新位置生成沿轨迹移动的球 */
+    _spawnBall() {
+      const d = GameModes.flickShot.data;
+      d.time = 0;
+      d.holdTime = 0;
+
+      if (Mode360.enabled()) {
+        let yaw, pitch, attempts = 0;
+        do {
+          const w = Mode360.randomWorld();
+          yaw = w.yaw;
+          pitch = w.pitch;
+          attempts++;
+        } while (
+          d.ball
+          && World3D.angularDistance(yaw, pitch, d.ball.originYaw, d.ball.originPitch) < 0.75
+          && attempts < 30
+        );
+        d.ball = {
+          originYaw: yaw,
+          originPitch: pitch,
+          yaw,
+          pitch,
+          x: Renderer.width / 2,
+          y: Renderer.height / 2,
+          age: 0,
+          startTime: performance.now(),
+        };
+      } else {
+        const pad = 100;
+        const w = Renderer.width;
+        const h = Renderer.height;
+        let x, y, attempts = 0;
+
+        do {
+          x = pad + Math.random() * (w - pad * 2);
+          y = pad + Math.random() * (h - pad * 2);
+          attempts++;
+        } while (
+          d.ball
+          && Math.hypot(x - d.ball.originX, y - d.ball.originY) < 220
+          && attempts < 30
+        );
+
+        d.ball = {
+          originX: x,
+          originY: y,
+          x,
+          y,
+          age: 0,
+          startTime: performance.now(),
+        };
+      }
+      d.trail = [];
+    },
+
+    /** 360° 模式下球体世界角轨迹 */
+    _ballWorldPosition(d) {
+      const t = d.time;
+      const spd = d.speed / 420;
+      const oy = d.ball.originYaw;
+      const op = d.ball.originPitch;
+      const amp = 0.28 + d.radius * 0.008;
+
+      switch (d.path) {
+        case 'horizontal':
+          return { yaw: oy + Math.sin(t * spd + d.phase) * amp * 1.6, pitch: op };
+        case 'vertical':
+          return { yaw: oy, pitch: op + Math.sin(t * spd + d.phase) * amp * 1.2 };
+        case 'circle':
+          return {
+            yaw: oy + Math.cos(t * spd + d.phase) * amp,
+            pitch: op + Math.sin(t * spd + d.phase) * amp * 0.75,
+          };
+        case 'figure8':
+          return {
+            yaw: oy + Math.sin(t * spd + d.phase) * amp,
+            pitch: op + Math.sin(t * spd * 2 + d.phase) * amp * 0.55,
+          };
+        case 'random': {
+          const o = spd * 0.55;
+          return {
+            yaw: oy + Math.sin(t * o + d.phase) * amp
+              + Math.sin(t * o * 1.9 + 1.2) * amp * 0.35,
+            pitch: op + Math.sin(t * o * 1.3 + 2.0) * amp * 0.7
+              + Math.sin(t * o * 2.4 + 0.5) * amp * 0.25,
+          };
+        }
+        default:
+          return { yaw: oy, pitch: op };
+      }
+    },
+
+    /**
+     * 计算球体当前位置（2D 或世界角）
+     * @param {object} d
+     * @returns {{x:number,y:number}|{yaw:number,pitch:number}}
+     */
+    _ballPosition(d) {
+      if (Mode360.enabled()) return GameModes.flickShot._ballWorldPosition(d);
+      const t = d.time;
+      const spd = d.speed / 400;
+      const ox = d.ball.originX;
+      const oy = d.ball.originY;
+      const amp = 70 + d.radius;
+
+      switch (d.path) {
+        case 'horizontal':
+          return { x: ox + Math.sin(t * spd + d.phase) * amp * 1.6, y: oy };
+        case 'vertical':
+          return { x: ox, y: oy + Math.sin(t * spd + d.phase) * amp * 1.2 };
+        case 'circle':
+          return {
+            x: ox + Math.cos(t * spd + d.phase) * amp,
+            y: oy + Math.sin(t * spd + d.phase) * amp * 0.75,
+          };
+        case 'figure8':
+          return {
+            x: ox + Math.sin(t * spd + d.phase) * amp,
+            y: oy + Math.sin(t * spd * 2 + d.phase) * amp * 0.55,
+          };
+        case 'random': {
+          const o = spd * 0.55;
+          return {
+            x: ox + Math.sin(t * o + d.phase) * amp
+              + Math.sin(t * o * 1.9 + 1.2) * amp * 0.35,
+            y: oy + Math.sin(t * o * 1.3 + 2.0) * amp * 0.7
+              + Math.sin(t * o * 2.4 + 0.5) * amp * 0.25,
+          };
+        }
+        default:
+          return { x: ox, y: oy };
+      }
+    },
+
+    update(dt) {
+      const d = GameModes.flickShot.data;
+      const session = State.session;
+      if (!d.ball) return;
+
+      d.time += dt;
+      d.ball.age += dt;
+      TargetAnim.updateParticles(d.particles, dt);
+
+      const pos = GameModes.flickShot._ballPosition(d);
+      let onBall;
+      if (Mode360.enabled()) {
+        d.ball.yaw = pos.yaw;
+        d.ball.pitch = pos.pitch;
+        const proj = Mode360.project(pos.yaw, pos.pitch);
+        d.ball.x = proj.x;
+        d.ball.y = proj.y;
+        d.ball.visible = proj.visible;
+        onBall = proj.visible && Input.isCenterOnScreen(proj.x, proj.y, d.radius);
+      } else {
+        d.ball.x = Math.max(d.radius, Math.min(Renderer.width - d.radius, pos.x));
+        d.ball.y = Math.max(d.radius, Math.min(Renderer.height - d.radius, pos.y));
+        d.ball.visible = true;
+        onBall = Input.isOnTarget(d.ball.x, d.ball.y, d.radius);
+      }
+
+      d.trail.push({ x: d.ball.x, y: d.ball.y });
+      if (d.trail.length > 24) d.trail.shift();
+
+      const holding = Input.mouseDown;
+
+      if (holding && onBall) {
+        d.holdTime += dt;
+        session.streak += dt;
+      } else {
+        session.streak = 0;
+      }
+
+      session.trackingCoverage = (d.holdTime / d.holdRequired) * 100;
+      session.score += holding && onBall ? Math.round(dt * 120) : 0;
+
+      if (d.holdTime >= d.holdRequired) {
+        GameModes._registerHit(session, d.ball.age * 1000);
+        d.particles.push(...Pool.spawnHitParticles(d.ball.x, d.ball.y));
+        d.current++;
+        session.remaining = d.total - d.current;
+        session.score += 500;
+        if (d.current >= d.total) {
+          Engine.endTraining();
+        } else {
+          GameModes.flickShot._spawnBall();
+        }
+      } else if (d.ball.age > d.holdRequired * 3) {
+        GameModes._registerMiss(session);
+        d.current++;
+        session.remaining = d.total - d.current;
+        if (d.current >= d.total) Engine.endTraining();
+        else GameModes.flickShot._spawnBall();
+      }
+    },
+
+    render() {
+      const d = GameModes.flickShot.data;
+      if (!d.ball) return;
+
+      const { ctx } = Renderer;
+      const holding = Input.mouseDown;
+      const onBall = Mode360.enabled()
+        ? d.ball.visible && Input.isCenterOnScreen(d.ball.x, d.ball.y, d.radius)
+        : Input.isOnTarget(d.ball.x, d.ball.y, d.radius);
+
+      if (Mode360.enabled()) {
+        Mode360.drawBackground(d.time);
+      } else {
+        ctx.fillStyle = '#0a0a0f';
+        ctx.fillRect(0, 0, Renderer.width, Renderer.height);
+      }
+
+      if (d.trail.length > 2) {
+        ctx.strokeStyle = 'rgba(0,255,136,0.15)';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(d.trail[0].x, d.trail[0].y);
+        for (let i = 1; i < d.trail.length; i++) ctx.lineTo(d.trail[i].x, d.trail[i].y);
+        ctx.stroke();
+      }
+
+      const progress = Math.min(d.holdTime / d.holdRequired, 1);
+      if (progress > 0) {
+        ctx.strokeStyle = holding && onBall ? '#00ff88' : '#ff4444';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.arc(d.ball.x, d.ball.y, d.radius + 10, -Math.PI / 2, -Math.PI / 2 + progress * Math.PI * 2);
+        ctx.stroke();
+      }
+
+      const scale = TargetAnim.popScale(Math.min(d.ball.age, 0.15));
+      if (!Mode360.enabled() || d.ball.visible) {
+        Renderer.drawTarget(
+          d.ball.x, d.ball.y, d.radius, 1, scale,
+          holding && onBall ? HIT_COLOR : TARGET_COLOR
+        );
+      } else if (Mode360.enabled()) {
+        Mode360.drawOffscreenIndicator({ x: d.ball.x, y: d.ball.y, visible: false });
+      }
+
+      if (!holding) {
+        ctx.fillStyle = 'rgba(255,255,255,0.5)';
+        ctx.font = '13px Consolas, monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(
+          State.lang === 'zh' ? '按住左键跟踪球体' : 'Hold LMB to track ball',
+          Renderer.width / 2, Renderer.height - 40
+        );
+      }
+
+      Renderer.drawParticles(d.particles);
+    },
+  },
+};
+
+// ─── Stats: 统计与评级 ────────────────────────────────────────────────────────
+const Stats = {
+  /**
+   * 创建新训练会话
+   * @param {string} modeId
+   * @param {object} params
+   * @returns {object}
+   */
+  createSession(modeId, params) {
+    return {
+      mode: modeId,
+      params,
+      startTime: Date.now(),
+      score: 0,
+      hits: 0,
+      misses: 0,
+      streak: 0,
+      maxStreak: 0,
+      shots: [],
+      ttcSum: 0,
+      ttcCount: 0,
+      remaining: 0,
+      flickTimes: [],
+      reactionTimes: [],
+    };
+  },
+
+  /**
+   * 结算会话数据
+   * @param {object} session
+   */
+  finalizeSession(session) {
+    session.endTime = Date.now();
+    session.duration = session.endTime - session.startTime;
+    session.accuracy = session.hits + session.misses > 0
+      ? (session.hits / (session.hits + session.misses)) * 100 : 0;
+    session.avgTtc = session.ttcCount > 0 ? session.ttcSum / session.ttcCount : 0;
+
+  // 反应时间剔除 ±2σ 异常值
+    if (session.reactionTimes && session.reactionTimes.length > 0) {
+      const arr = session.reactionTimes.slice().sort((a, b) => a - b);
+      const mean = arr.reduce((s, v) => s + v, 0) / arr.length;
+      const std = Math.sqrt(arr.reduce((s, v) => s + (v - mean) ** 2, 0) / arr.length);
+      const filtered = arr.filter(v => Math.abs(v - mean) <= 2 * std);
+      session.avgReaction = filtered.length ? filtered.reduce((s, v) => s + v, 0) / filtered.length : mean;
+      session.reactionStd = std;
+    }
+
+    if (session.shots.length > 1) {
+      const hitTimes = session.shots.filter(s => s.type === 'hit' && s.time).map(s => s.time);
+      if (hitTimes.length > 1) {
+        const m = hitTimes.reduce((a, b) => a + b, 0) / hitTimes.length;
+        session.ttcStd = Math.sqrt(hitTimes.reduce((s, v) => s + (v - m) ** 2, 0) / hitTimes.length);
+      }
+    }
+
+    session.grade = Stats.computeGrade(session);
+  },
+
+  /**
+   * 基于得分/准确度/反应时间计算评级 S/A/B/C/D
+   * @param {object} session
+   * @returns {string}
+   */
+  computeGrade(session) {
+    let score = 0;
+    score += Math.min(session.accuracy, 100) * 0.4;
+    if (session.avgTtc > 0) score += Math.max(0, 60 - session.avgTtc / 10);
+    if (session.avgReaction) score += Math.max(0, 60 - session.avgReaction / 5);
+    if (session.trackingCoverage) score += session.trackingCoverage * 0.5;
+    score += Math.min(session.score / 200, 40);
+
+    if (score >= 85) return 'S';
+    if (score >= 70) return 'A';
+    if (score >= 55) return 'B';
+    if (score >= 40) return 'C';
+    return 'D';
+  },
+};
+
+// ─── Storage: localStorage 持久化 ─────────────────────────────────────────────
+const Storage = {
+  /**
+   * 加载设置与历史
+   * @returns {object}
+   */
+  load() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (raw) return JSON.parse(raw);
+    } catch (_) {}
+    return Storage.defaultData();
+  },
+
+  defaultData() {
+    return {
+      settings: Storage.defaultSettings(),
+      history: [],
+      highScores: {},
+      presets: {},
+      mode360Prefs: {},
+    };
+  },
+
+  /**
+   * @param {string} modeId
+   * @returns {boolean}
+   */
+  getMode360Pref(modeId) {
+    const data = Storage.load();
+    if (data.mode360Prefs && Object.prototype.hasOwnProperty.call(data.mode360Prefs, modeId)) {
+      return !!data.mode360Prefs[modeId];
+    }
+    return modeId === 'tracking';
+  },
+
+  /**
+   * @param {string} modeId
+   * @param {boolean} val
+   */
+  saveMode360Pref(modeId, val) {
+    const data = Storage.load();
+    if (!data.mode360Prefs) data.mode360Prefs = {};
+    data.mode360Prefs[modeId] = !!val;
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  },
+
+  defaultSettings() {
+    return {
+      sensitivity: 1.0,
+      rawInput: true,
+      audioEnabled: true,
+      screenShake: true,
+      crosshair: {
+        type: 'cross',
+        color: '#00ff00',
+        thickness: 2,
+        length: 8,
+        gap: 4,
+        opacity: 1,
+        shootSpread: true,
+      },
+    };
+  },
+
+  /**
+   * @param {string} modeId
+   * @returns {object}
+   */
+  getDefaultModeParams(modeId) {
+    const defaults = {
+      gridShot: { gridSize: 40, targetSize: 22, totalTargets: 50, spawnInterval: 200, timeLimit: 0, simultaneousCount: 3, clusterRadius: 3 },
+      tracking: { targetSize: 50, speed: 150, pathType: 'circle', duration: 30 },
+      reaction: { targetSize: 50, totalTrials: 25, prepTimeMin: 1, prepTimeMax: 4, targetTimeout: 2000 },
+      flickShot: { targetSize: 40, totalRounds: 10, trackDuration: 3, speed: 200, pathType: 'circle' },
+    };
+    const base = defaults[modeId] || {};
+    return { ...base, enable360: Storage.getMode360Pref(modeId) };
+  },
+
+  save() {
+    const data = Storage.load();
+    data.settings = State.settings;
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  },
+
+  /**
+   * @param {object} session
+   */
+  saveSession(session) {
+    const data = Storage.load();
+    data.history.unshift({
+      mode: session.mode,
+      score: session.score,
+      accuracy: session.accuracy,
+      avgTtc: session.avgTtc,
+      avgReaction: session.avgReaction,
+      grade: session.grade,
+      timestamp: session.endTime,
+    });
+    if (data.history.length > MAX_HISTORY) data.history.length = MAX_HISTORY;
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  },
+
+  updateHighScore(mode, score) {
+    const data = Storage.load();
+    if (!data.highScores[mode] || score > data.highScores[mode]) {
+      data.highScores[mode] = score;
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    }
+  },
+
+  getHistory(mode) {
+    return Storage.load().history.filter(h => h.mode === mode).slice(0, 10);
+  },
+
+  getHighScore(mode) {
+    return Storage.load().highScores[mode] || 0;
+  },
+};
+
+// ─── UI: 菜单、HUD、结算 ──────────────────────────────────────────────────────
+const UI = {
+  overlay: null,
+
+  init() {
+    UI.overlay = document.getElementById('uiOverlay');
+    document.getElementById('langToggle').addEventListener('click', UI.toggleLang);
+    UI.showMenu();
+    UI.renderHUDElements();
+  },
+
+  t(zh, en) { return State.lang === 'zh' ? zh : en; },
+
+  toggleLang() {
+    State.lang = State.lang === 'zh' ? 'en' : 'zh';
+    document.getElementById('langToggle').textContent = State.lang === 'zh' ? 'EN' : '中文';
+    if (State.phase === GAME_STATE.MENU) UI.showMenu();
+    else if (State.phase === GAME_STATE.RESULTS) UI.showResults();
+  },
+
+  hideMenu() {
+    UI.overlay.classList.remove('interactive');
+    UI.overlay.innerHTML = '';
+  },
+
+  showMenu() {
+    UI.overlay.classList.add('interactive');
+    const modes = [
+      { id: 'gridShot', name: UI.t('网格射击', 'Grid Shot'), desc: UI.t('网格内多目标点击，可选360°', 'Click targets — optional 360°') },
+      { id: 'tracking', name: UI.t('追踪训练', 'Tracking'), desc: UI.t('追踪移动目标，可选360°视角', 'Track moving target — optional 360°') },
+      { id: 'reaction', name: UI.t('反应测试', 'Reaction'), desc: UI.t('测量反应延迟，可选360°', 'Measure reaction — optional 360°') },
+      { id: 'flickShot', name: UI.t('扫射转移', 'Flick Shot'), desc: UI.t('按住左键跟踪移动球体，可选360°', 'Hold LMB & track ball — optional 360°') },
+    ];
+    const s = State.settings;
+
+    UI.overlay.innerHTML = `
+      <div class="panel menu-center">
+        <h1>AIM TRAINER</h1>
+        <h2>${UI.t('FPS 瞄准训练系统', 'FPS Aim Training System')}</h2>
+        <div class="tabs">
+          <button class="tab-btn ${State.menuTab === 'modes' ? 'active' : ''}" data-tab="modes">${UI.t('模式', 'Modes')}</button>
+          <button class="tab-btn ${State.menuTab === 'settings' ? 'active' : ''}" data-tab="settings">${UI.t('设置', 'Settings')}</button>
+        </div>
+        <div id="tabModes" class="tab-content ${State.menuTab === 'modes' ? 'active' : ''}">
+          <div class="mode-grid" id="modeGrid">
+            ${modes.map((m, i) => `
+              <button class="mode-btn ${State.mode === m.id ? 'selected' : ''}" data-mode="${m.id}">
+                ${m.name}<span class="desc">${m.desc}</span>
+                <span class="desc">${UI.t('最高', 'Best')}: ${Storage.getHighScore(m.id)}</span>
+              </button>
+            `).join('')}
+          </div>
+          <div id="modeParams">${UI.renderModeParams(State.mode)}</div>
+          <button class="action-btn" id="startBtn" style="width:100%;margin-top:12px;text-align:center;font-size:1rem;color:#00ff88">
+            ${UI.t('开始训练', 'START TRAINING')}
+          </button>
+        </div>
+        <div id="tabSettings" class="tab-content ${State.menuTab === 'settings' ? 'active' : ''}">
+          ${UI.renderSettingsPanel(s)}
+        </div>
+        <p style="font-size:.65rem;color:#555;margin-top:16px;text-align:center">
+          ESC ${UI.t('暂停', 'Pause')} · R ${UI.t('重开', 'Restart')} · Tab ${UI.t('切换HUD', 'Toggle HUD')}
+        </p>
+      </div>`;
+
+    UI.overlay.querySelectorAll('.tab-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        State.menuTab = btn.dataset.tab;
+        UI.showMenu();
+      });
+    });
+    UI.overlay.querySelectorAll('.mode-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        State.mode = btn.dataset.mode;
+        document.getElementById('modeParams').innerHTML = UI.renderModeParams(State.mode);
+        UI.overlay.querySelectorAll('.mode-btn').forEach(b => b.classList.toggle('selected', b.dataset.mode === State.mode));
+      });
+    });
+    document.getElementById('startBtn').addEventListener('click', () => {
+      UI.saveSettingsFromForm();
+      Engine.startTraining(State.mode);
+    });
+    UI.bindSettingsEvents();
+  },
+
+  renderSettingsPanel(s) {
+    const ch = s.crosshair;
+    return `
+      <div class="settings-group">
+        <label>${UI.t('灵敏度', 'Sensitivity')}: <span id="sensVal">${s.sensitivity.toFixed(1)}</span></label>
+        <input type="range" id="sensitivity" min="0.1" max="10" step="0.1" value="${s.sensitivity}">
+      </div>
+      <label class="checkbox-row"><input type="checkbox" id="rawInput" ${s.rawInput ? 'checked' : ''}> ${UI.t('原始输入模式', 'Raw input mode')}</label>
+      <label class="checkbox-row"><input type="checkbox" id="audioEnabled" ${s.audioEnabled ? 'checked' : ''}> ${UI.t('音效', 'Audio')}</label>
+      <label class="checkbox-row"><input type="checkbox" id="screenShake" ${s.screenShake ? 'checked' : ''}> ${UI.t('屏幕震动', 'Screen shake')}</label>
+      <h3 style="color:#00ff88;font-size:.85rem;margin:16px 0 8px">${UI.t('准星设置', 'Crosshair')}</h3>
+      <div class="settings-row">
+        <div class="settings-group">
+          <label>${UI.t('类型', 'Type')}</label>
+          <select id="chType">
+            <option value="cross" ${ch.type === 'cross' ? 'selected' : ''}>${UI.t('十字', 'Cross')}</option>
+            <option value="dot" ${ch.type === 'dot' ? 'selected' : ''}>${UI.t('圆点', 'Dot')}</option>
+            <option value="circle" ${ch.type === 'circle' ? 'selected' : ''}>${UI.t('圆环', 'Circle')}</option>
+          </select>
+        </div>
+        <div class="settings-group">
+          <label>${UI.t('颜色', 'Color')}</label>
+          <input type="color" id="chColor" value="${ch.color}">
+        </div>
+      </div>
+      <div class="settings-row">
+        <div class="settings-group">
+          <label>${UI.t('粗细', 'Thickness')}: <span id="chThickVal">${ch.thickness}</span></label>
+          <input type="range" id="chThickness" min="1" max="8" value="${ch.thickness}">
+        </div>
+        <div class="settings-group">
+          <label>${UI.t('长度/半径', 'Length')}: <span id="chLenVal">${ch.length}</span></label>
+          <input type="range" id="chLength" min="2" max="20" value="${ch.length}">
+        </div>
+      </div>
+      <div class="settings-row">
+        <div class="settings-group">
+          <label>${UI.t('中心间隙', 'Gap')}: <span id="chGapVal">${ch.gap}</span></label>
+          <input type="range" id="chGap" min="0" max="10" value="${ch.gap}">
+        </div>
+        <div class="settings-group">
+          <label>${UI.t('透明度', 'Opacity')}: <span id="chOpVal">${ch.opacity}</span></label>
+          <input type="range" id="chOpacity" min="0.1" max="1" step="0.1" value="${ch.opacity}">
+        </div>
+      </div>
+      <label class="checkbox-row"><input type="checkbox" id="chSpread" ${ch.shootSpread ? 'checked' : ''}> ${UI.t('射击扩散动画', 'Shoot spread animation')}</label>
+      <button class="action-btn" id="saveSettingsBtn" style="width:100%;margin-top:12px">${UI.t('保存设置', 'Save Settings')}</button>
+    `;
+  },
+
+  bindSettingsEvents() {
+    const sens = document.getElementById('sensitivity');
+    if (sens) sens.addEventListener('input', () => {
+      document.getElementById('sensVal').textContent = parseFloat(sens.value).toFixed(1);
+    });
+    ['chThickness', 'chLength', 'chGap', 'chOpacity'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.addEventListener('input', () => {
+        const valEl = document.getElementById(id.replace('ch', 'ch').replace('Thickness', 'ThickVal').replace('Length', 'LenVal').replace('Gap', 'GapVal').replace('Opacity', 'OpVal'));
+        if (valEl) valEl.textContent = el.value;
+      });
+    });
+    const saveBtn = document.getElementById('saveSettingsBtn');
+    if (saveBtn) saveBtn.addEventListener('click', () => { UI.saveSettingsFromForm(); UI.showMenu(); });
+  },
+
+  saveSettingsFromForm() {
+    const s = State.settings;
+    const g = (id) => document.getElementById(id);
+    if (g('sensitivity')) s.sensitivity = parseFloat(g('sensitivity').value);
+    if (g('rawInput')) s.rawInput = g('rawInput').checked;
+    if (g('audioEnabled')) s.audioEnabled = g('audioEnabled').checked;
+    if (g('screenShake')) s.screenShake = g('screenShake').checked;
+    if (g('chType')) {
+      s.crosshair.type = g('chType').value;
+      s.crosshair.color = g('chColor')?.value || s.crosshair.color;
+      s.crosshair.thickness = parseInt(g('chThickness')?.value || s.crosshair.thickness);
+      s.crosshair.length = parseInt(g('chLength')?.value || s.crosshair.length);
+      s.crosshair.gap = parseInt(g('chGap')?.value || s.crosshair.gap);
+      s.crosshair.opacity = parseFloat(g('chOpacity')?.value || s.crosshair.opacity);
+      s.crosshair.shootSpread = g('chSpread')?.checked ?? s.crosshair.shootSpread;
+    }
+    Storage.save();
+  },
+
+  /**
+   * @param {string} modeId
+   * @returns {string}
+   */
+  renderModeParams(modeId) {
+    const p = Storage.getDefaultModeParams(modeId);
+    const r = (label, id, min, max, val, step = 1) => `
+      <div class="settings-group">
+        <label>${label}: <span id="${id}Val">${val}</span></label>
+        <input type="range" id="${id}" min="${min}" max="${max}" step="${step}" value="${val}">
+      </div>`;
+
+    const toggle360 = `
+      <label class="checkbox-row" style="margin-top:10px">
+        <input type="checkbox" id="mpEnable360" ${p.enable360 ? 'checked' : ''}>
+        ${UI.t('启用 360° 模式', 'Enable 360° mode')}
+      </label>
+      <p style="font-size:.65rem;color:#555;margin:4px 0 0">${UI.t('鼠标转动视角，准星固定在屏幕中心', 'Mouse to look around — crosshair locked to center')}</p>`;
+
+    if (modeId === 'gridShot') return `
+      <h3 style="color:#888;font-size:.8rem;margin:12px 0 8px">${UI.t('模式参数', 'Mode Params')}</h3>
+      <p style="font-size:.7rem;color:#666;margin-bottom:10px">${UI.t('固定 40×40 细网格，同屏目标聚集出现', 'Fixed 40×40 grid, clustered spawns')}</p>
+      <div class="settings-row">
+        ${r(UI.t('目标尺寸', 'Target Size'), 'mpTargetSize', 14, 36, p.targetSize)}
+        ${r(UI.t('同屏目标数', 'Simultaneous'), 'mpSimultaneous', 1, 12, p.simultaneousCount || 1)}
+      </div>
+      <div class="settings-row">
+        ${r(UI.t('目标数量', 'Total Targets'), 'mpTotalTargets', 30, 100, p.totalTargets, 10)}
+        ${r(UI.t('聚集半径', 'Cluster Radius'), 'mpClusterRadius', 2, 5, p.clusterRadius || 3)}
+      </div>
+      <div class="settings-row">
+        ${r(UI.t('出现间隔ms', 'Spawn Interval'), 'mpSpawnInterval', 0, 500, p.spawnInterval, 50)}
+      </div>
+      ${toggle360}`;
+    if (modeId === 'tracking') return `
+      <h3 style="color:#888;font-size:.8rem;margin:12px 0 8px">${UI.t('模式参数', 'Mode Params')}</h3>
+      <p style="font-size:.7rem;color:#666;margin-bottom:10px">${UI.t('追踪移动目标，可选 360° 全景视角', 'Track moving target — optional 360° view')}</p>
+      <div class="settings-row">
+        ${r(UI.t('目标尺寸', 'Target Size'), 'mpTargetSize', 40, 80, p.targetSize)}
+        ${r(UI.t('速度 px/s', 'Speed'), 'mpSpeed', 100, 500, p.speed, 10)}
+      </div>
+      <div class="settings-group">
+        <label>${UI.t('路径类型', 'Path')}</label>
+        <select id="mpPathType">
+          <option value="horizontal">${UI.t('水平', 'Horizontal')}</option>
+          <option value="vertical">${UI.t('垂直', 'Vertical')}</option>
+          <option value="circle" selected>${UI.t('圆形', 'Circle')}</option>
+          <option value="figure8">${UI.t('8字形', 'Figure-8')}</option>
+          <option value="random">${UI.t('随机', 'Random')}</option>
+        </select>
+      </div>
+      <div class="settings-group">
+        <label>${UI.t('持续时间(秒)', 'Duration')}</label>
+        <select id="mpDuration">
+          <option value="15">15s</option>
+          <option value="30" selected>30s</option>
+          <option value="60">60s</option>
+        </select>
+      </div>
+      ${toggle360}`;
+    if (modeId === 'reaction') return `
+      <h3 style="color:#888;font-size:.8rem;margin:12px 0 8px">${UI.t('模式参数', 'Mode Params')}</h3>
+      <div class="settings-row">
+        ${r(UI.t('目标尺寸', 'Target Size'), 'mpTargetSize', 40, 80, p.targetSize)}
+        <div class="settings-group">
+          <label>${UI.t('测试次数', 'Trials')}</label>
+          <select id="mpTotalTrials">
+            <option value="10">10</option>
+            <option value="25" selected>25</option>
+            <option value="50">50</option>
+          </select>
+        </div>
+      </div>
+      ${toggle360}`;
+    if (modeId === 'flickShot') return `
+      <h3 style="color:#888;font-size:.8rem;margin:12px 0 8px">${UI.t('模式参数', 'Mode Params')}</h3>
+      <p style="font-size:.7rem;color:#666;margin-bottom:10px">${UI.t('球体沿轨迹移动，按住左键跟踪若干秒', 'Ball moves on path — hold LMB to track')}</p>
+      <div class="settings-row">
+        ${r(UI.t('目标尺寸', 'Target Size'), 'mpTargetSize', 30, 55, p.targetSize)}
+        ${r(UI.t('跟踪时长秒', 'Track Duration'), 'mpTrackDuration', 2, 6, p.trackDuration || 3)}
+      </div>
+      <div class="settings-row">
+        ${r(UI.t('移动速度', 'Speed'), 'mpSpeed', 100, 400, p.speed || 200, 10)}
+        <div class="settings-group">
+          <label>${UI.t('回合数', 'Rounds')}</label>
+          <select id="mpTotalRounds">
+            <option value="5">5</option>
+            <option value="10" selected>10</option>
+            <option value="20">20</option>
+          </select>
+        </div>
+      </div>
+      <div class="settings-group">
+        <label>${UI.t('轨迹类型', 'Path')}</label>
+        <select id="mpPathType">
+          <option value="horizontal">${UI.t('水平', 'Horizontal')}</option>
+          <option value="vertical">${UI.t('垂直', 'Vertical')}</option>
+          <option value="circle" selected>${UI.t('圆形', 'Circle')}</option>
+          <option value="figure8">${UI.t('8字形', 'Figure-8')}</option>
+          <option value="random">${UI.t('随机', 'Random')}</option>
+        </select>
+      </div>
+      ${toggle360}`;
+    return '';
+  },
+
+  /**
+   * 从 UI 收集模式参数
+   * @param {string} modeId
+   * @returns {object}
+   */
+  collectModeParams(modeId) {
+    const g = (id) => document.getElementById(id);
+    const num = (id, def) => g(id) ? parseFloat(g(id).value) : def;
+    const enable360 = g('mpEnable360')?.checked ?? Storage.getMode360Pref(modeId);
+    if (modeId === 'gridShot') return {
+      gridSize: 40,
+      targetSize: num('mpTargetSize', 22),
+      totalTargets: num('mpTotalTargets', 50),
+      simultaneousCount: Math.min(12, num('mpSimultaneous', 3)),
+      clusterRadius: num('mpClusterRadius', 3),
+      spawnInterval: num('mpSpawnInterval', 200),
+      timeLimit: 0,
+      enable360,
+    };
+    if (modeId === 'tracking') return {
+      targetSize: num('mpTargetSize', 50),
+      speed: num('mpSpeed', 150),
+      pathType: g('mpPathType')?.value || 'circle',
+      duration: parseInt(g('mpDuration')?.value || 30),
+      enable360,
+    };
+    if (modeId === 'reaction') return {
+      targetSize: num('mpTargetSize', 50),
+      totalTrials: parseInt(g('mpTotalTrials')?.value || 25),
+      prepTimeMin: 1,
+      prepTimeMax: 4,
+      targetTimeout: 2000,
+      enable360,
+    };
+    if (modeId === 'flickShot') return {
+      targetSize: num('mpTargetSize', 40),
+      totalRounds: parseInt(g('mpTotalRounds')?.value || 10),
+      trackDuration: num('mpTrackDuration', 3),
+      speed: num('mpSpeed', 200),
+      pathType: g('mpPathType')?.value || 'circle',
+      enable360,
+    };
+    return {};
+  },
+
+  renderHUDElements() {
+    const hud = document.createElement('div');
+    hud.id = 'hud';
+    hud.className = 'hud';
+    hud.innerHTML = `
+      <div id="hudLeft"></div>
+      <div class="hud hud-right" id="hudRight"></div>`;
+    document.body.appendChild(hud);
+  },
+
+  renderHUD() {
+    const session = State.session;
+    if (!session) return;
+    const left = document.getElementById('hudLeft');
+    const right = document.getElementById('hudRight');
+    if (!left) return;
+    document.getElementById('hud').classList.toggle('hidden', !State.hudVisible);
+
+    const acc = session.hits + session.misses > 0
+      ? ((session.hits / (session.hits + session.misses)) * 100).toFixed(1) : '100.0';
+    const avgTtc = session.ttcCount > 0 ? (session.ttcSum / session.ttcCount).toFixed(0) : '--';
+
+    if (State.mode === 'tracking') {
+      const coverage = session.trackingCoverage != null ? session.trackingCoverage.toFixed(1) : '0.0';
+      const avgDist = session.avgDistance != null ? session.avgDistance.toFixed(0) : '--';
+      left.innerHTML = `
+        ${UI.t('得分', 'Score')}: <span class="val">${session.score}</span><br>
+        ${UI.t('追踪覆盖', 'Coverage')}: <span class="val">${coverage}%</span><br>
+        ${UI.t('平均偏差', 'Avg Offset')}: <span class="val">${avgDist}px</span><br>
+        ${UI.t('连击', 'Streak')}: <span class="val">${session.streak.toFixed(1)}s</span>`;
+      right.innerHTML = `
+        ${UI.t('剩余时间', 'Time Left')}: <span class="val">${Math.ceil(session.remaining)}s</span><br>
+        ${Mode360.enabled() ? `${UI.t('提示', 'Tip')}: <span class="val">${UI.t('鼠标转动360°视角', 'Mouse to look 360°')}</span><br>` : ''}
+        FPS: <span class="val">${Engine.fps}</span>`;
+      return;
+    }
+
+    if (State.mode === 'flickShot') {
+      const d = GameModes.flickShot.data;
+      const holdPct = d?.holdRequired ? ((d.holdTime / d.holdRequired) * 100).toFixed(0) : '0';
+      left.innerHTML = `
+        ${UI.t('得分', 'Score')}: <span class="val">${session.score}</span><br>
+        ${UI.t('跟踪进度', 'Track Progress')}: <span class="val">${holdPct}%</span><br>
+        ${UI.t('回合', 'Round')}: <span class="val">${d ? d.current + 1 : 1}/${d ? d.total : '?'}</span><br>
+        ${UI.t('连击', 'Streak')}: <span class="val">${session.streak.toFixed(1)}s</span>`;
+      right.innerHTML = `
+        ${UI.t('剩余', 'Remaining')}: <span class="val">${session.remaining}</span><br>
+        ${Mode360.enabled() ? `${UI.t('提示', 'Tip')}: <span class="val">${UI.t('鼠标转动360°视角', 'Mouse to look 360°')}</span><br>` : `${UI.t('提示', 'Tip')}: <span class="val">${UI.t('按住左键跟踪球', 'Hold LMB on ball')}</span><br>`}
+        FPS: <span class="val">${Engine.fps}</span>`;
+      return;
+    }
+
+    left.innerHTML = `
+      ${UI.t('得分', 'Score')}: <span class="val">${session.score}</span><br>
+      ${UI.t('准确度', 'Accuracy')}: <span class="val">${acc}%</span><br>
+      ${UI.t('连击', 'Streak')}: <span class="val">${Math.floor(session.streak)}</span><br>
+      ${UI.t('平均TTC', 'Avg TTC')}: <span class="val">${avgTtc}ms</span>`;
+
+    const remainLabel = State.mode === 'tracking'
+      ? UI.t('剩余时间', 'Time Left')
+      : UI.t('剩余', 'Remaining');
+    const remainVal = State.mode === 'tracking'
+      ? Math.ceil(session.remaining) + 's'
+      : session.remaining;
+
+    right.innerHTML = `
+      ${remainLabel}: <span class="val">${remainVal}</span><br>
+      ${UI.t('命中', 'Hits')}: <span class="val">${session.hits}</span>
+      ${UI.t('失误', 'Miss')}: <span class="warn">${session.misses}</span><br>
+      ${Mode360.enabled() ? `${UI.t('提示', 'Tip')}: <span class="val">${UI.t('鼠标转动360°视角', 'Mouse to look 360°')}</span><br>` : ''}
+      FPS: <span class="val">${Engine.fps}</span>`;
+  },
+
+  renderCountdown() {
+    let el = document.getElementById('countdown');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'countdown';
+      el.className = 'countdown-overlay';
+      document.body.appendChild(el);
+    }
+    el.textContent = State.countdownValue > 0 ? State.countdownValue : UI.t('开始!', 'GO!');
+    el.style.opacity = State.countdownTimer < 0.3 ? State.countdownTimer / 0.3 : 1;
+    if (State.phase !== GAME_STATE.COUNTDOWN) el.remove();
+  },
+
+  showResults() {
+    UI.overlay.classList.add('interactive');
+    const s = State.session;
+    const history = Storage.getHistory(s.mode);
+    UI.overlay.innerHTML = `
+      <div class="panel menu-center results-panel">
+        <h1>${UI.t('训练完成', 'Training Complete')}</h1>
+        <div class="grade grade-${s.grade}">${s.grade}</div>
+        <div style="text-align:center;font-size:1.4rem;color:#00ff88;margin-bottom:8px">${s.score.toLocaleString()} ${UI.t('分', 'pts')}</div>
+        <div class="stat-grid">
+          <div class="stat-item"><div class="label">${UI.t('准确度', 'Accuracy')}</div><div class="value">${s.accuracy.toFixed(1)}%</div></div>
+          <div class="stat-item"><div class="label">${UI.t('平均TTC', 'Avg TTC')}</div><div class="value">${s.avgTtc ? s.avgTtc.toFixed(0) + 'ms' : '--'}</div></div>
+          <div class="stat-item"><div class="label">${UI.t('失误', 'Misses')}</div><div class="value">${s.misses}</div></div>
+          <div class="stat-item"><div class="label">${UI.t('最大连击', 'Max Streak')}</div><div class="value">${s.maxStreak}</div></div>
+          ${s.avgReaction ? `<div class="stat-item"><div class="label">${UI.t('平均反应', 'Avg Reaction')}</div><div class="value">${s.avgReaction.toFixed(0)}ms</div></div>` : ''}
+          ${s.trackingCoverage !== undefined ? `<div class="stat-item"><div class="label">${UI.t('追踪覆盖', 'Coverage')}</div><div class="value">${s.trackingCoverage.toFixed(1)}%</div></div>` : ''}
+          ${s.ttcStd ? `<div class="stat-item"><div class="label">${UI.t('一致性σ', 'Consistency σ')}</div><div class="value">${s.ttcStd.toFixed(0)}ms</div></div>` : ''}
+          ${s.reactionStd ? `<div class="stat-item"><div class="label">${UI.t('反应σ', 'Reaction σ')}</div><div class="value">${s.reactionStd.toFixed(0)}ms</div></div>` : ''}
+        </div>
+        <canvas id="trendChart"></canvas>
+        <div class="btn-row">
+          <button class="action-btn" id="retryBtn">${UI.t('再来一次 (R)', 'Retry (R)')}</button>
+          <button class="back-btn" id="menuBtn">${UI.t('返回菜单', 'Menu')}</button>
+        </div>
+        <button class="action-btn" id="exportBtn" style="width:100%;margin-top:8px;font-size:.75rem">${UI.t('导出成绩 JSON', 'Export JSON')}</button>
+      </div>`;
+
+    UI.drawTrendChart(history);
+    document.getElementById('retryBtn').addEventListener('click', () => Engine.restart());
+    document.getElementById('menuBtn').addEventListener('click', () => Engine.returnToMenu());
+    document.getElementById('exportBtn').addEventListener('click', () => UI.exportResults(s));
+  },
+
+  /**
+   * 绘制最近10次成绩折线图
+   * @param {Array} history
+   */
+  drawTrendChart(history) {
+    const canvas = document.getElementById('trendChart');
+    if (!canvas || history.length === 0) return;
+    const ctx = canvas.getContext('2d');
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = canvas.clientWidth * dpr;
+    canvas.height = canvas.clientHeight * dpr;
+    ctx.scale(dpr, dpr);
+    const w = canvas.clientWidth;
+    const h = canvas.clientHeight;
+    const pad = 24;
+    const data = history.slice(0, 10).reverse();
+    const scores = data.map(d => d.score);
+    const min = Math.min(...scores) * 0.9;
+    const max = Math.max(...scores) * 1.1;
+
+    ctx.clearRect(0, 0, w, h);
+    ctx.strokeStyle = 'rgba(255,255,255,0.1)';
+    ctx.beginPath();
+    ctx.moveTo(pad, h - pad);
+    ctx.lineTo(w - pad, h - pad);
+    ctx.stroke();
+
+    if (data.length < 2) {
+      ctx.fillStyle = '#666';
+      ctx.font = '11px Consolas';
+      ctx.textAlign = 'center';
+      ctx.fillText(UI.t('需要更多数据', 'Need more data'), w / 2, h / 2);
+      return;
+    }
+
+    ctx.strokeStyle = '#00ff88';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    data.forEach((d, i) => {
+      const x = pad + (i / (data.length - 1)) * (w - pad * 2);
+      const y = h - pad - ((d.score - min) / (max - min)) * (h - pad * 2);
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+
+    ctx.fillStyle = '#00ff88';
+    data.forEach((d, i) => {
+      const x = pad + (i / (data.length - 1)) * (w - pad * 2);
+      const y = h - pad - ((d.score - min) / (max - min)) * (h - pad * 2);
+      ctx.beginPath();
+      ctx.arc(x, y, 3, 0, Math.PI * 2);
+      ctx.fill();
+    });
+
+    ctx.fillStyle = '#666';
+    ctx.font = '10px Consolas';
+    ctx.textAlign = 'left';
+    ctx.fillText(UI.t('最近成绩趋势', 'Recent scores'), pad, 14);
+  },
+
+  /**
+   * @param {object} session
+   */
+  exportResults(session) {
+    const blob = new Blob([JSON.stringify(session, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `aim-trainer-${session.mode}-${Date.now()}.json`;
+    a.click();
+  },
+
+  showPause() {
+    UI.overlay.classList.add('interactive');
+    UI.overlay.innerHTML = `
+      <div class="pause-overlay">
+        <div class="pause-panel panel">
+          <h2>${UI.t('已暂停', 'PAUSED')}</h2>
+          <p>${UI.t('按 ESC 继续', 'Press ESC to resume')}</p>
+          <p>${UI.t('点击此处继续', 'Click to resume')}</p>
+          <button class="action-btn" id="quitBtn" style="margin-top:16px">${UI.t('退出训练', 'Quit')}</button>
+        </div>
+      </div>`;
+    document.getElementById('quitBtn').addEventListener('click', () => Engine.returnToMenu());
+    UI.overlay.querySelector('.pause-overlay').addEventListener('click', (e) => {
+      if (e.target.id === 'quitBtn') return;
+      if (e.target.classList.contains('pause-overlay') || e.target.closest('.pause-panel')) {
+        Engine.resume();
+      }
+    });
+  },
+
+  hidePause() {
+    UI.overlay.innerHTML = '';
+    UI.overlay.classList.remove('interactive');
+  },
+};
+
+// ─── Engine 扩展：暂停/ESC/R ─────────────────────────────────────────────────
+Engine.handleEscape = function () {
+  if (State.phase === GAME_STATE.PLAYING) {
+    State.phase = GAME_STATE.PAUSED;
+    Input.unlockPointer();
+    UI.showPause();
+  } else if (State.phase === GAME_STATE.PAUSED) {
+    Engine.resume();
+  } else if (State.phase === GAME_STATE.RESULTS) {
+    Engine.returnToMenu();
+  }
+};
+
+Engine.resume = function () {
+  State.phase = GAME_STATE.PLAYING;
+  UI.hidePause();
+  Input.skipCameraMoves = 3;
+  requestAnimationFrame(() => {
+    Renderer.canvas.focus();
+    Input.lockPointer();
+  });
+};
+
+Engine.handleRestart = function () {
+  if (State.phase === GAME_STATE.PLAYING || State.phase === GAME_STATE.RESULTS || State.phase === GAME_STATE.PAUSED) {
+    Engine.restart();
+  }
+};
+
+// ─── 启动 ─────────────────────────────────────────────────────────────────────
+(function bootstrap() {
+  const data = Storage.load();
+  State.settings = data.settings || Storage.defaultSettings();
+  UI.init();
+  Engine.init(document.getElementById('gameCanvas'));
+})();
+</script>
+</body>
+</html>
